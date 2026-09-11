@@ -1,0 +1,26 @@
+{
+  "name": "plarr-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.37.0",
+    "@vitejs/plugin-vue": "latest",
+    "hls.js": "latest",
+    "vite": "latest",
+    "vue": "latest"
+  },
+  "devDependencies": {
+    "@testing-library/vue": "^8.1.0",
+    "@vue/tsconfig": "latest",
+    "jsdom": "^30.0.1",
+    "typescript": "5.9.3",
+    "vitest": "latest",
+    "vue-tsc": "latest"
+  }
+}

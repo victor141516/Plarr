@@ -1,0 +1,6 @@
+.env
+.runtime/
+/cache/
+web/node_modules/
+web/dist/
+*.tsbuildinfo
