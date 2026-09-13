@@ -9,6 +9,7 @@ import {
 } from "vue";
 import {
   AudioLines,
+  Cast,
   Captions,
   Crop,
   Ellipsis,
@@ -31,6 +32,7 @@ import { formatMediaTime } from "./playerPresentation";
 import type { PlayerTrack, QualityLevel } from "./playerTypes";
 import type { ColorPreference } from "./mediaCapabilities";
 import PlaybackSpeedControl from "./PlaybackSpeedControl.vue";
+import CastButton from "./CastButton.vue";
 import PlayerOverflowMenu, { type OverflowAction } from "./PlayerOverflowMenu.vue";
 import PlayerTrackOptions from "./PlayerTrackOptions.vue";
 import QualityMenuContent from "./QualityMenuContent.vue";
@@ -74,6 +76,9 @@ const props = defineProps<{
   videoFrameCrop: Readonly<VideoFrameCrop>;
   hasPrevious: boolean;
   hasNext: boolean;
+  castAvailable: boolean;
+  castConnected: boolean;
+  castDeviceName: string;
 }>();
 
 const emit = defineEmits<{
@@ -97,6 +102,7 @@ const emit = defineEmits<{
   clearTimelinePreview: [];
   adjustVideoFrame: [side: VideoFrameSide, delta: number];
   resetVideoFrame: [];
+  cast: [];
 }>();
 
 const menu = defineModel<string>("menu", { required: true });
@@ -140,6 +146,9 @@ const controlDefinitions = computed<ResponsiveControlDefinition[]>(() => [
   { id: "subtitles", zone: "right", priority: 5, overflow: true },
   { id: "quality", zone: "right", priority: 6, overflow: true },
   { id: "fullscreen", zone: "right", priority: 6, overflow: true },
+  ...(props.castAvailable
+    ? [{ id: "cast", zone: "right", priority: 7, overflow: true } as const]
+    : []),
   ...(props.hasPrevious
     ? [{ id: "previous", zone: "left", priority: 7, overflow: true } as const]
     : []),
@@ -175,6 +184,18 @@ const quickActions = computed<OverflowAction[]>(() => [
     : []),
   { id: "pip", label: "Picture in picture", icon: PictureInPicture2 },
   { id: "fullscreen", label: "Fullscreen", icon: Maximize },
+  ...(props.castAvailable
+    ? [
+        {
+          id: "cast",
+          label: props.castConnected
+            ? `Casting to ${props.castDeviceName}`
+            : "Cast",
+          icon: Cast,
+          selected: props.castConnected,
+        },
+      ]
+    : []),
 ]);
 const settingActions = computed<OverflowAction[]>(() => [
   { id: "audio", label: "Audio tracks", icon: AudioLines, submenu: true },
@@ -211,6 +232,7 @@ function activateOverflow(id: string): void {
   if (id === "diagnostics") emit("toggleDiagnostics");
   if (id === "pip") emit("pictureInPicture");
   if (id === "fullscreen") emit("fullscreen");
+  if (id === "cast") emit("cast");
   menu.value = "";
 }
 
@@ -365,6 +387,13 @@ useEventListener<PointerEvent>(document, "pointerdown", (event) => {
       </div>
 
       <div class="control-zone control-zone-right">
+        <CastButton
+          v-if="castAvailable && isVisible('cast')"
+          data-control-id="cast"
+          :connected="castConnected"
+          :device-name="castDeviceName"
+          @activate="emit('cast')"
+        />
         <div v-if="isVisible('audio')" class="popover-wrap" data-control-id="audio" data-player-menu="audio">
           <button class="icon-button" aria-label="Audio tracks" title="Audio tracks" @click="toggleMenu('audio')"><AudioLines /></button>
           <div v-if="menu === 'audio'" class="popover">

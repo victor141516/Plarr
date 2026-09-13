@@ -2,6 +2,8 @@
 
 Plarr is a standalone, unauthenticated browser player and versioned media API. It direct-plays compatible sources, remuxes browser-compatible streams when only the container must change, and builds an adaptive HLS ladder with FFmpeg when transcoding is required. It also exposes deterministic audio/subtitle selection, original and transcoded downloads, and versioned playback events for an optional parent application.
 
+Google Cast uses Google's Default Media Receiver, so nothing needs to be installed on the television. The sender hands the receiver absolute Plarr HLS and subtitle URLs and keeps playback position, transport, volume, quality, audio, and subtitles under the existing player controls. The receiver must be able to reach the configured `PLARR_PUBLIC_ORIGIN`; Plarr does not add URL signing or authentication.
+
 ## Run
 
 ```bash
@@ -36,6 +38,12 @@ The segment cache is cleared at startup and evicts cold files at the configured 
 go test ./...
 npm --prefix web test -- --run
 npm --prefix web run build
+```
+
+The normal web suite includes a deterministic mock Cast receiver. To run the same receiver against a live Plarr HLS stream, provide its absolute master URL:
+
+```bash
+PLARR_CAST_TEST_URL='https://plarr.example/api/v1/media/<id>/hls/master.m3u8?session=cast-test&generation=1&start=0&quality=240p' npm --prefix web test -- --run src/castLiveReceiver.test.ts
 ```
 
 Manual codec and acceleration checks must use a clip of ten seconds or less. Do not transcode a complete movie or episode for verification.
