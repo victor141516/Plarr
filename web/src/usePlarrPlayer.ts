@@ -36,6 +36,7 @@ import { useTimelinePreview } from "./useTimelinePreview";
 import { useVideoFraming } from "./useVideoFraming";
 import { measureNetworkBandwidth } from "./bandwidthProbe";
 import { AVSyncRecoveryLimiter } from "./avSyncGuard";
+import { useCastPlayback } from "./useCastPlayback";
 import {
   type PlaybackMode,
   type PlayerProbe,
@@ -95,7 +96,7 @@ export function usePlarrPlayer() {
     bufferAhead,
     bufferedRangeStyles,
     bufferedSeconds,
-    commitSeekEvent,
+    commitSeekEvent: commitLocalSeekEvent,
     completePendingPosition,
     current,
     duration,
@@ -267,8 +268,8 @@ export function usePlarrPlayer() {
     audioTracks,
     initialize: initializeTracks,
     selectedAudioTrack,
-    selectAudio,
-    selectSubtitle,
+    selectAudio: selectLocalAudio,
+    selectSubtitle: selectLocalSubtitle,
     subtitle,
     subtitleTracks,
   } = usePlayerTracks({
@@ -368,7 +369,7 @@ export function usePlarrPlayer() {
   canUseOriginalAutomatically = () =>
     originalAvailable.value && canOriginalHLS();
   const {
-    changeVolume,
+    changeVolume: changeLocalVolume,
     beginSurfacePress,
     cancelSurfacePress,
     closeDiagnostics,
@@ -380,11 +381,11 @@ export function usePlarrPlayer() {
     mobileSeekSeconds,
     reveal,
     syncVolumeFromElement,
-    setPlaybackRate,
+    setPlaybackRate: setLocalPlaybackRate,
     surfaceClick,
     endSurfacePress,
     toggleDiagnostics,
-    toggleMute,
+    toggleMute: toggleLocalMute,
   } = usePlayerInteractions({
     video,
     current,
@@ -400,8 +401,124 @@ export function usePlarrPlayer() {
     seek,
   });
 
+  const castPlayback = useCastPlayback({
+    mediaBase: base,
+    sessionId,
+    title: displayTitle,
+    duration,
+    current,
+    playing,
+    loading,
+    volume,
+    muted,
+    playbackRate,
+    subtitleTracks,
+    audio,
+    subtitle,
+    sourceHDR,
+    deliveryColor,
+    pauseLocal: () => {
+      clearStartupWatchdog();
+      stopHeartbeat();
+      destroyHls();
+      resetElement();
+      playing.value = false;
+    },
+    restoreLocal: (position) => {
+      if (disposed || !video.value) return;
+      loading.value = true;
+      if (manualLevel.value === -2) {
+        loadOriginalAt(position, false, isAutomatic());
+      } else {
+        loadAdaptiveAt(
+          position,
+          false,
+          manualLevel.value >= 0 ? manualLevel.value : 0,
+        );
+      }
+    },
+    emit,
+    error: (message) => {
+      playbackIssue.value = `Google Cast: ${message}`;
+      diagnosticsDecision.value = `Google Cast could not continue: ${message}`;
+    },
+  });
+
   function seekRelative(seconds: number): void {
+    if (castPlayback.connected.value) {
+      castPlayback.seek(current.value + seconds);
+      return;
+    }
     seek(current.value + seconds);
+  }
+
+  function commitSeekEvent(event: Event): void {
+    if (!castPlayback.connected.value) {
+      commitLocalSeekEvent(event);
+      return;
+    }
+    timeline.scrubbing = false;
+    castPlayback.seek(Number((event.target as HTMLInputElement).value));
+  }
+
+  function changeVolume(event: Event): void {
+    if (!castPlayback.connected.value) {
+      changeLocalVolume(event);
+      return;
+    }
+    const next = Math.max(
+      0,
+      Math.min(1, Number((event.target as HTMLInputElement).value)),
+    );
+    castPlayback.setVolume(next);
+  }
+
+  function toggleMute(): void {
+    if (castPlayback.connected.value) {
+      castPlayback.setMuted(!muted.value);
+      return;
+    }
+    toggleLocalMute();
+  }
+
+  function selectAudio(index: number): void {
+    if (!castPlayback.connected.value) {
+      selectLocalAudio(index);
+      return;
+    }
+    castPlayback.selectAudio(index);
+    const track = audioTracks.value.find((item) => item.index === index);
+    emit("audio-track-changed", {
+      audioLanguage: track?.language,
+      audioTitle: track?.name,
+    });
+    menu.value = "";
+  }
+
+  function selectSubtitle(index?: number): void {
+    if (!castPlayback.connected.value) {
+      selectLocalSubtitle(index);
+      return;
+    }
+    castPlayback.selectSubtitle(index);
+    const track = subtitleTracks.value.find((item) => item.index === index);
+    emit(
+      index === undefined ? "subtitles-disabled" : "subtitle-track-changed",
+      {
+        subtitleLanguage: track?.language,
+        subtitleTitle: track?.name,
+        subtitlesEnabled: index !== undefined,
+      },
+    );
+    menu.value = "";
+  }
+
+  function setPlaybackRate(value: number): void {
+    if (castPlayback.connected.value) {
+      castPlayback.setPlaybackRate(value);
+      return;
+    }
+    setLocalPlaybackRate(value);
   }
   const { attach: attachMediaEvents } = useMediaElementEvents({
     video,
@@ -577,6 +694,32 @@ export function usePlarrPlayer() {
   function selectQuality(value: string) {
     const at = current.value,
       resume = !!video.value && !video.value.paused;
+    if (castPlayback.connected.value) {
+      if (value === "Original") {
+        setAutomatic(false);
+        manualLevel.value = -2;
+        quality.value = "Original";
+        diagnosticsDecision.value =
+          "Original was selected manually for Google Cast.";
+        castPlayback.selectQuality("original");
+      } else if (value === "Auto") {
+        setAutomatic(true);
+        manualLevel.value = -1;
+        quality.value = "Auto";
+        diagnosticsDecision.value =
+          "Google Cast is using the adaptive rendition ladder.";
+        castPlayback.selectQuality("auto");
+      } else {
+        setAutomatic(false);
+        const index = Number(value);
+        manualLevel.value = index;
+        quality.value = `${availableLevels.value[index]?.height}p`;
+        diagnosticsDecision.value = `${quality.value} was selected manually for Google Cast.`;
+        castPlayback.selectQuality(quality.value);
+      }
+      emit("manual-quality-changed", { quality: quality.value });
+      return;
+    }
     if (value === "Original") {
       diagnosticsDecision.value =
         "Original was selected manually; the bandwidth estimate did not choose this mode.";
@@ -609,6 +752,17 @@ export function usePlarrPlayer() {
     const previous = deliveryColor.value;
     colorPreference.value = value;
     if (deliveryColor.value === previous) return;
+    if (castPlayback.connected.value) {
+      if (manualLevel.value === -2 && deliveryColor.value === "sdr") {
+        setAutomatic(true);
+        manualLevel.value = -1;
+        quality.value = "Auto";
+        castPlayback.selectQuality("auto");
+      } else {
+        castPlayback.reload();
+      }
+      return;
+    }
     const el = video.value;
     if (!el) return;
     const at = current.value;
@@ -633,6 +787,10 @@ export function usePlarrPlayer() {
     loadAdaptiveAt(at, resume, isAutomatic() ? 0 : undefined);
   }
   function toggle() {
+    if (castPlayback.connected.value) {
+      castPlayback.toggle();
+      return;
+    }
     if (!video.value) return;
     if (timeline.pendingAbsolute !== undefined) {
       timeline.resumeAfterLoad = true;
@@ -722,5 +880,9 @@ export function usePlarrPlayer() {
     clearTimelinePreview,
     hasPrevious,
     hasNext,
+    castAvailable: castPlayback.available,
+    castConnected: castPlayback.connected,
+    castDeviceName: castPlayback.deviceName,
+    requestCast: castPlayback.request,
   };
 }

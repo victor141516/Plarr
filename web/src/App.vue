@@ -73,6 +73,10 @@ const {
   clearTimelinePreview,
   hasPrevious,
   hasNext,
+  castAvailable,
+  castConnected,
+  castDeviceName,
+  requestCast,
 } = usePlarrPlayer();
 </script>
 
@@ -164,6 +168,9 @@ const {
       :video-frame-crop="videoFrameCrop"
       :has-previous="hasPrevious"
       :has-next="hasNext"
+      :cast-available="castAvailable"
+      :cast-connected="castConnected"
+      :cast-device-name="castDeviceName"
       @preview-seek="previewSeekEvent"
       @commit-seek="commitSeekEvent"
       @previous="emit('previous-requested')"
@@ -184,6 +191,7 @@ const {
       @reset-video-frame="resetVideoFrame"
       @timeline-preview="previewTimeline"
       @clear-timeline-preview="clearTimelinePreview"
+      @cast="requestCast"
     />
   </main>
 </template>

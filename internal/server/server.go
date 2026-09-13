@@ -104,10 +104,13 @@ func (s *Server) log(next http.Handler) http.Handler {
 func (s *Server) headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Range, Accept-Encoding")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+		w.Header().Set("Timing-Allow-Origin", "*")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; media-src 'self' blob:; connect-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob:; frame-ancestors *")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; media-src 'self' blob:; connect-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.gstatic.com; img-src 'self' data: blob:; frame-ancestors *")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
 			return
@@ -503,6 +506,7 @@ func (s *Server) master(w http.ResponseWriter, r *http.Request) {
 	if probe.IsHDR(p.Video) {
 		query += "&sourceHDR=1"
 	}
+	requestedQuality := strings.TrimSpace(r.URL.Query().Get("quality"))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	fmt.Fprintln(w, "#EXTM3U")
 	version := 6
@@ -510,7 +514,8 @@ func (s *Server) master(w http.ResponseWriter, r *http.Request) {
 		version = 7
 	}
 	fmt.Fprintf(w, "#EXT-X-VERSION:%d\n", version)
-	for i, a := range p.Audio {
+	selectedAudio := selectedAudioIndex(p, r.URL.Query().Get("audio"))
+	for _, a := range p.Audio {
 		language := a.Tags["language"]
 		if language == "" {
 			language = "und"
@@ -520,7 +525,7 @@ func (s *Server) master(w http.ResponseWriter, r *http.Request) {
 			name = strings.ToUpper(language)
 		}
 		def := "NO"
-		if i == 0 || a.Disposition["default"] == 1 {
+		if a.Index == selectedAudio {
 			def = "YES"
 		}
 		fmt.Fprintf(w, "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"%s\",LANGUAGE=\"%s\",DEFAULT=%s,AUTOSELECT=YES,URI=\"audio/%d/index.m3u8%s\"\n", manifestValue(name), manifestValue(language), def, a.Index, query)
@@ -531,6 +536,7 @@ func (s *Server) master(w http.ResponseWriter, r *http.Request) {
 	}
 	renditions = append([]config.Rendition(nil), renditions...)
 	sort.SliceStable(renditions, func(i, j int) bool { return renditions[i].VideoBitrate < renditions[j].VideoBitrate })
+	renditions = requestedRenditions(renditions, requestedQuality)
 	for _, v := range renditions {
 		width := int(float64(v.Height) * 16 / 9)
 		if p.Video != nil && p.Video.Height > 0 {
@@ -550,6 +556,18 @@ func (s *Server) master(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "#EXT-X-STREAM-INF:BANDWIDTH=%d,AVERAGE-BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=\"%s\",NAME=\"%s\"%s%s\n", int(float64(v.VideoBitrate)*1.15)+48_000, v.VideoBitrate+48_000, width, v.Height, codecs, v.Label, audioAttr, videoRange)
 		fmt.Fprintf(w, "%s/index.m3u8%s\n", v.Label, query)
 	}
+}
+
+func requestedRenditions(all []config.Rendition, requested string) []config.Rendition {
+	if requested == "" {
+		return all
+	}
+	for _, rendition := range all {
+		if strings.EqualFold(rendition.Label, requested) {
+			return []config.Rendition{rendition}
+		}
+	}
+	return all
 }
 
 func manifestValue(v string) string {

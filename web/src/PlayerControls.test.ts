@@ -35,10 +35,25 @@ const defaultProps = {
   videoFrameCrop: { top: 0, right: 0, bottom: 0, left: 0 },
   hasPrevious: true,
   hasNext: true,
+  castAvailable: false,
+  castConnected: false,
+  castDeviceName: "",
   menu: "",
 };
 
 describe("PlayerControls", () => {
+  it("shows Cast only when a receiver is available", async () => {
+    const hidden = render(PlayerControls, { props: defaultProps });
+    expect(hidden.queryByRole("button", { name: "Cast" })).toBeNull();
+    hidden.unmount();
+
+    const view = render(PlayerControls, {
+      props: { ...defaultProps, castAvailable: true },
+    });
+    await fireEvent.click(view.getByRole("button", { name: "Cast" }));
+    expect(view.emitted().cast).toHaveLength(1);
+  });
+
   it("exposes typed playback actions and menu model updates", async () => {
     const view = render(PlayerControls, { props: defaultProps });
 
