@@ -25,7 +25,7 @@ import (
 const (
 	hlsAudioBitrate      = 48_000
 	hlsSegmentSeconds    = 2
-	hlsVideoCacheVersion = "hls-v12-aligned"
+	hlsVideoCacheVersion = "hls-v13-no-reorder"
 	hlsAudioCacheVersion = "audio-hls-v9-aligned"
 	originalCacheVersion = "original-av-hls-v4-aac-audio"
 	downloadAudioBitrate = 96_000
@@ -66,12 +66,12 @@ type sessionLease struct {
 func New(ffmpeg string, c *cache.Manager, r []config.Rendition, hw []string, log *slog.Logger) *Manager {
 	m := &Manager{FFmpeg: ffmpeg, Cache: c, Renditions: r, Hardware: hw, Log: log, running: map[string]*job{}, encoders: map[string]bool{}, filters: map[string]bool{}, failedStrategies: map[string]bool{}, strategyDiagnostics: map[string]*playbackStrategyTrace{}, sessionLeases: map[string]*sessionLease{}, sessionIdle: defaultSessionIdle, previewSlots: make(chan struct{}, 1)}
 	if out, err := exec.Command(ffmpeg, "-hide_banner", "-encoders").CombinedOutput(); err == nil {
-		for _, encoder := range []string{"h264_nvenc", "hevc_nvenc", "h264_qsv", "h264_vaapi", "libx265"} {
+		for _, encoder := range []string{"h264_nvenc", "hevc_nvenc", "h264_qsv", "h264_vaapi", "hevc_vaapi", "libx265"} {
 			m.encoders[encoder] = strings.Contains(string(out), encoder)
 		}
 	}
 	if out, err := exec.Command(ffmpeg, "-hide_banner", "-filters").CombinedOutput(); err == nil {
-		for _, filter := range []string{"scale_cuda", "zscale", "tonemap", "tonemap_cuda", "tonemap_opencl"} {
+		for _, filter := range []string{"scale_cuda", "scale_vaapi", "zscale", "tonemap", "tonemap_cuda", "tonemap_opencl"} {
 			m.filters[filter] = strings.Contains(string(out), filter)
 		}
 	}
@@ -93,7 +93,7 @@ const (
 
 func (m *Manager) Capabilities() map[string]any {
 	detected := []string{}
-	for _, name := range []string{"h264_nvenc", "hevc_nvenc", "h264_qsv", "h264_vaapi"} {
+	for _, name := range []string{"h264_nvenc", "hevc_nvenc", "h264_qsv", "h264_vaapi", "hevc_vaapi"} {
 		if m.encoders[name] {
 			detected = append(detected, name)
 		}
@@ -130,6 +130,9 @@ func (m *Manager) videoStrategies(height int, color ColorMode, sourceHDR bool) [
 				strategies = append(strategies, videoStrategy{"nvidia-cuda", []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-threads", "1"}, []string{"-vf", fmt.Sprintf("scale_cuda=-2:%d:format=p010le", height), "-c:v", "hevc_nvenc", "-preset", "p4", "-profile:v", "main10", "-tag:v", "hvc1", "-forced-idr", "1", "-no-scenecut", "1", "-strict_gop", "1"}})
 			}
 			strategies = append(strategies, videoStrategy{"nvidia", nil, []string{"-vf", softwareFilter, "-c:v", "hevc_nvenc", "-preset", "p4", "-profile:v", "main10", "-pix_fmt", "p010le", "-tag:v", "hvc1", "-forced-idr", "1", "-no-scenecut", "1", "-strict_gop", "1"}})
+		}
+		if deviceExists() {
+			strategies = append(strategies, m.vaapiStrategies(height, color, sourceHDR, softwareFilter)...)
 		}
 		strategies = append(strategies, videoStrategy{"cpu", nil, []string{"-vf", softwareFilter, "-c:v", "libx265", "-preset", "veryfast", "-profile:v", "main10", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1", "-x265-params", "open-gop=0:scenecut=0"}})
 		return strategies
@@ -168,8 +171,8 @@ func (m *Manager) videoStrategies(height int, color ColorMode, sourceHDR bool) [
 	if m.enabled("intel") && m.encoders["h264_qsv"] && deviceExists() {
 		strategies = append(strategies, videoStrategy{"intel-qsv", nil, []string{"-vf", softwareFilter + ",format=nv12", "-c:v", "h264_qsv", "-preset", "veryfast", "-profile:v", "high"}})
 	}
-	if (m.enabled("amd") || m.enabled("intel")) && m.encoders["h264_vaapi"] && deviceExists() {
-		strategies = append(strategies, videoStrategy{"vaapi", nil, []string{"-vaapi_device", "/dev/dri/renderD128", "-vf", softwareFilter + ",format=nv12,hwupload", "-c:v", "h264_vaapi", "-profile:v", "high"}})
+	if deviceExists() {
+		strategies = append(strategies, m.vaapiStrategies(height, color, sourceHDR, softwareFilter)...)
 	}
 	strategies = append(strategies, videoStrategy{"cpu", nil, []string{"-vf", softwareFilter, "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-profile:v", "high", "-level", "4.1", "-x264-params", "open-gop=0:scenecut=0"}})
 	return strategies
@@ -284,6 +287,11 @@ func hlsVideoOutputArgs(r config.Rendition, start float64, completedSegments int
 	segmentSeconds := strconv.Itoa(hlsSegmentSeconds)
 	args := []string{
 		"-fps_mode", "passthrough",
+		// Audio lives in a separate HLS lane. B-frame reordering gives video
+		// negative DTS; the muxer then shifts only that lane (NVENC: two frames),
+		// causing a persistent A/V offset. Preserve presentation timestamps by
+		// disabling reordering rather than enabling NVENC's unsafe zerolatency.
+		"-bf", "0",
 		"-flags", "+cgop",
 		"-b:v", strconv.Itoa(r.VideoBitrate),
 		"-maxrate", strconv.Itoa(int(float64(r.VideoBitrate) * 1.15)),

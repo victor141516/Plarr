@@ -30,6 +30,20 @@ Hardware order in `auto` mode is NVIDIA, Intel QSV, Intel/AMD VAAPI, then the re
 
 The container never requires a GPU. NVIDIA Docker/WSL deployments must request `gpus: all` and include the `compute`, `video`, and `utility` driver capabilities; Intel/AMD deployments expose `/dev/dri`.
 
+### AMD / Intel VAAPI
+
+Expose `/dev/dri` and add the numeric group owning `/dev/dri/renderD128` to
+the container. Nestrr provides `docker-compose.vaapi.yml` for this setup.
+VAAPI decoding and resizing precede H.264 encoding for SDR or ten-bit HEVC
+encoding for HDR. HDR-to-SDR uses CPU tone mapping between hardware decode
+and encode. Vulkan userptr and DMA-BUF tone-mapping paths are excluded after
+kernel crashes and black-frame failures on AMD Rembrandt. Unsupported
+decoders fall back to software decoding with hardware encoding, followed
+by full CPU processing if needed.
+
+The image pins Jellyfin FFmpeg 8.1.2-4. HLS video disables B-frame reordering
+to keep independently generated video and audio segments aligned.
+
 The segment cache is cleared at startup and evicts cold files at the configured limit. Closing playback does not delete reusable session segments. See Nestrr's `DEPLOYMENT.md` and `docs/API.md` for the full topology and public contracts.
 
 ## Verify
@@ -47,3 +61,9 @@ PLARR_CAST_TEST_URL='https://plarr.example/api/v1/media/<id>/hls/master.m3u8?ses
 ```
 
 Manual codec and acceleration checks must use a clip of ten seconds or less. Do not transcode a complete movie or episode for verification.
+
+`python scripts/verify_playback.py --help` describes the hardware integration
+suite. It generates eight-second flash/tone fixtures and verifies direct
+play, stream copy, audio-only and audio/video transcoding, HDR conversion
+and preservation, plus non-keyframe seeks. Reports include measured A/V
+offsets, drift, stream metadata and runtime strategy diagnostics.

@@ -25,6 +25,9 @@ func TestEveryVideoContainerUsesTheSourcePTSWithoutMuxOffset(t *testing.T) {
 		if !strings.Contains(joined, "-force_key_frames source") {
 			t.Fatalf("%s video does not mirror source keyframes: %s", color, joined)
 		}
+		if !strings.Contains(joined, "-bf 0") {
+			t.Fatalf("%s video allows reordered DTS to shift the independent audio timeline: %s", color, joined)
+		}
 		if !strings.Contains(joined, "-muxdelay 0 -f hls") {
 			t.Fatalf("%s video can acquire a container-specific timestamp offset: %s", color, joined)
 		}
