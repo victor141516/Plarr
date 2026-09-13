@@ -33,6 +33,8 @@ const defaultProps = {
   playbackRate: 1,
   timelinePreviewURL: "",
   videoFrameCrop: { top: 0, right: 0, bottom: 0, left: 0 },
+  hasPrevious: true,
+  hasNext: true,
   menu: "",
 };
 
@@ -57,6 +59,15 @@ describe("PlayerControls", () => {
     );
 
     expect(view.emitted().seekBy).toEqual([[-5], [5]]);
+  });
+
+  it("only renders episode navigation that the host reports as available", () => {
+    const view = render(PlayerControls, {
+      props: { ...defaultProps, hasPrevious: false, hasNext: true },
+    });
+
+    expect(view.queryByRole("button", { name: "Previous episode" })).toBeNull();
+    expect(view.getByRole("button", { name: "Next episode" })).toBeTruthy();
   });
 
   it("adjusts and resets video framing without closing its menu", async () => {

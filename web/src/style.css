@@ -314,30 +314,44 @@ header .icon-button {
     0 0 0 4px #fff;
 }
 .control-row {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
+  --control-gap: 6px;
+  position: relative;
   min-height: 2.5rem;
+  min-width: 2.5rem;
 }
-.transport-controls {
+.control-zone {
+  position: absolute;
+  top: 0;
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--control-gap);
+  height: 2.5rem;
+  white-space: nowrap;
+}
+.control-zone-left {
+  left: 0;
+}
+.control-zone-right {
+  right: 0;
+}
+.control-row.force-overflow {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+.control-row.force-overflow .control-zone-right {
+  right: auto;
+  left: 0;
 }
 .time {
-  margin-left: 0.5rem;
   color: #bdc2c5;
   font-size: 0.8rem;
   white-space: nowrap;
-}
-.spacer {
-  flex: 1;
 }
 .volume-control {
   display: flex;
   align-items: center;
   gap: 0.15rem;
-  margin-left: 0.2rem;
 }
 .volume-slider {
   width: 86px;
@@ -347,6 +361,14 @@ header .icon-button {
 }
 .popover-wrap {
   position: relative;
+}
+.more-control {
+  flex: 0 0 2.5rem;
+  width: 2.5rem;
+}
+.more-button-placeholder {
+  visibility: hidden;
+  pointer-events: none;
 }
 .quality-button {
   min-height: 2.5rem;
@@ -399,16 +421,22 @@ header .icon-button {
   margin-top: 0.15rem;
   color: #929ba0;
 }
+.track-options {
+  display: grid;
+}
 
 .quality-popover {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
   min-width: 310px;
   max-height: min(390px, calc(100vh - 86px));
   overflow: hidden;
   padding: 0;
 }
-.quality-popover.has-hdr {
+.quality-menu-content {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+.quality-menu-content.has-hdr {
   grid-template-rows: auto minmax(0, 1fr);
 }
 .quality-popover-header {
@@ -449,6 +477,92 @@ header .icon-button {
   border-radius: 50%;
   background: #ff6b5f;
   box-shadow: 0 0 0 1px #ff6b5f44;
+}
+
+.overflow-popover {
+  right: 0;
+  display: grid;
+  width: min(320px, calc(100vw - 1rem));
+  min-width: 260px;
+  max-height: min(430px, calc(100vh - 86px));
+  overflow: auto;
+  padding: 0.45rem;
+  transform-origin: right bottom;
+}
+.overflow-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.2rem;
+  border-bottom: 1px solid #30383e;
+}
+.overflow-quick-actions .icon-button,
+.overflow-volume .icon-button,
+.overflow-subview-header .icon-button {
+  padding: 0;
+  text-align: center;
+}
+.overflow-quick-actions .icon-button {
+  position: relative;
+}
+.overflow-seek-number {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding-top: 1px;
+  font-size: 0.58rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.overflow-volume {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.2rem;
+  border-bottom: 1px solid #30383e;
+}
+.overflow-volume .volume-slider {
+  flex: 1;
+  width: auto;
+}
+.overflow-settings {
+  display: grid;
+  padding-top: 0.25rem;
+}
+.popover .overflow-setting {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.65rem;
+}
+.overflow-setting svg {
+  width: 19px;
+  height: 19px;
+}
+.overflow-subview-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0 0.4rem;
+  border-bottom: 1px solid #30383e;
+}
+.overflow-subview-header b {
+  font-size: 0.88rem;
+}
+.overflow-subview {
+  min-height: 0;
+  overflow: auto;
+}
+.overflow-menu-enter-active,
+.overflow-menu-leave-active {
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.overflow-menu-enter-from,
+.overflow-menu-leave-to {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
 }
 
 .diagnostics-panel {
@@ -562,19 +676,6 @@ header .icon-button {
   .controls {
     padding: 3rem 0.6rem 0.8rem;
   }
-  .time {
-    display: none;
-  }
-  .control-row {
-    flex-wrap: wrap;
-    gap: 0.1rem;
-  }
-  .transport-controls {
-    flex: 1 0 100%;
-    justify-content: center;
-    gap: 0.35rem;
-    margin-bottom: 0.15rem;
-  }
   .big-play {
     width: 64px;
     height: 64px;
@@ -582,9 +683,6 @@ header .icon-button {
   .big-play svg {
     width: 30px;
     height: 30px;
-  }
-  .volume-control {
-    margin-left: 0;
   }
   .volume-slider {
     width: 58px;
@@ -595,6 +693,9 @@ header .icon-button {
     bottom: 68px;
     left: 0.5rem;
   }
+  .overflow-popover {
+    width: auto;
+  }
   .diagnostics-panel {
     right: 0.5rem;
     bottom: 68px;
@@ -604,5 +705,12 @@ header .icon-button {
   .diagnostics-section dl > div {
     grid-template-columns: minmax(105px, 0.7fr) minmax(0, 1fr);
     gap: 0.6rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overflow-menu-enter-active,
+  .overflow-menu-leave-active {
+    transition: none;
   }
 }

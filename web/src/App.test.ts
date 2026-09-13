@@ -69,6 +69,8 @@ const player = vi.hoisted(() => ({
   timelinePreviewURL: "",
   previewTimeline: vi.fn(),
   clearTimelinePreview: vi.fn(),
+  hasPrevious: true,
+  hasNext: true,
 }));
 
 vi.mock("./usePlarrPlayer", () => ({

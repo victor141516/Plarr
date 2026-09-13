@@ -80,7 +80,7 @@ export function usePlarrPlayer() {
   let playbackGeneration = 0;
   const avSyncRecoveryLimiter = new AVSyncRecoveryLimiter();
   let initController: AbortController | undefined;
-  const { base, mediaId, mediaPath, params, parentOrigin } =
+  const { base, mediaId, mediaPath, params, parentOrigin, hasPrevious, hasNext } =
     parsePlayerLocation(location.hash);
   const trustedParent = shallowRef(false);
   const {
@@ -720,5 +720,7 @@ export function usePlarrPlayer() {
     timelinePreviewURL,
     previewTimeline,
     clearTimelinePreview,
+    hasPrevious,
+    hasNext,
   };
 }

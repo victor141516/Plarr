@@ -4,6 +4,8 @@ export interface PlayerLocation {
   params: URLSearchParams;
   base: string;
   parentOrigin: string;
+  hasPrevious: boolean;
+  hasNext: boolean;
 }
 
 export function parsePlayerLocation(hash: string): PlayerLocation {
@@ -32,5 +34,7 @@ export function parsePlayerLocation(hash: string): PlayerLocation {
     params,
     base: `/api/v1/media/${encodeURIComponent(mediaId)}`,
     parentOrigin: params.get("parentOrigin") || "",
+    hasPrevious: params.get("hasPrevious") === "1",
+    hasNext: params.get("hasNext") === "1",
   };
 }

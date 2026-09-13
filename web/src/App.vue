@@ -71,6 +71,8 @@ const {
   timelinePreviewURL,
   previewTimeline,
   clearTimelinePreview,
+  hasPrevious,
+  hasNext,
 } = usePlarrPlayer();
 </script>
 
@@ -160,6 +162,8 @@ const {
       :playback-rate="playbackRate"
       :timeline-preview-u-r-l="timelinePreviewURL"
       :video-frame-crop="videoFrameCrop"
+      :has-previous="hasPrevious"
+      :has-next="hasNext"
       @preview-seek="previewSeekEvent"
       @commit-seek="commitSeekEvent"
       @previous="emit('previous-requested')"
