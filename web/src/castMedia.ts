@@ -1,5 +1,6 @@
 import type { CastMediaRequest, CastTrack } from "./castTypes";
 import type { PlayerTrack } from "./playerTypes";
+import { playbackURL } from "./playbackURL";
 
 export type CastQuality = "auto" | "original" | string;
 
@@ -19,6 +20,7 @@ export interface CastMediaOptions {
   subtitleTracks: PlayerTrack[];
   autoplay: boolean;
   playbackRate: number;
+  playbackToken?: string;
 }
 
 const subtitleTrackOffset = 100_000;
@@ -39,7 +41,10 @@ function castTracks(options: CastMediaOptions): CastTrack[] {
       type: "text" as const,
       contentId: absoluteURL(
         options.origin,
-        `${options.mediaBase}/subtitles/${track.index}.vtt?${query}`,
+        playbackURL(
+          `${options.mediaBase}/subtitles/${track.index}.vtt?${query}`,
+          options.playbackToken,
+        ),
       ),
       contentType: "text/vtt",
       name: track.name || `Subtitle ${track.index}`,
@@ -78,7 +83,10 @@ export function buildCastMediaRequest(
   ];
   const fmp4Video = options.quality === "original" || options.color === "hdr";
   return {
-    contentId: absoluteURL(options.origin, `${master}?${query}`),
+    contentId: absoluteURL(
+      options.origin,
+      playbackURL(`${master}?${query}`, options.playbackToken),
+    ),
     contentType: "application/x-mpegURL",
     title: options.title,
     duration: options.duration,

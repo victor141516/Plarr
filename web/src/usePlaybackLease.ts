@@ -1,16 +1,25 @@
 import { onScopeDispose, watch, type Ref } from "vue";
 import { useEventListener } from "./useEventListener";
+import { isPlaybackAuthorizationFailure, playbackURL } from "./playbackURL";
 
 export interface PlaybackLeaseOptions {
   sessionId: string;
   active: Readonly<Ref<boolean>>;
   heartbeatMilliseconds?: number;
+  playbackToken?: string;
+  onAuthorizationExpired?: () => void;
 }
 
 export function usePlaybackLease(options: PlaybackLeaseOptions) {
   const session = encodeURIComponent(options.sessionId);
-  const heartbeatURL = `/api/v1/playback/sessions/${session}/heartbeat`;
-  const closeURL = `/api/v1/playback/sessions/${session}/close`;
+  const heartbeatURL = playbackURL(
+    `/api/v1/playback/sessions/${session}/heartbeat`,
+    options.playbackToken,
+  );
+  const closeURL = playbackURL(
+    `/api/v1/playback/sessions/${session}/close`,
+    options.playbackToken,
+  );
   let heartbeat: number | undefined;
   let closed = false;
   let blocked = false;
@@ -20,7 +29,13 @@ export function usePlaybackLease(options: PlaybackLeaseOptions) {
     void fetch(heartbeatURL, {
       method: "POST",
       keepalive: true,
-    }).catch(() => undefined);
+    })
+      .then((response) => {
+        if (isPlaybackAuthorizationFailure(response.status)) {
+          options.onAuthorizationExpired?.();
+        }
+      })
+      .catch(() => undefined);
   }
 
   function stop(): void {

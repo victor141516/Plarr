@@ -1,8 +1,8 @@
 # Plarr
 
-Plarr is a standalone, unauthenticated browser player and versioned media API. It direct-plays compatible sources, remuxes browser-compatible streams when only the container must change, and builds an adaptive HLS ladder with FFmpeg when transcoding is required. It also exposes deterministic audio/subtitle selection, original and transcoded downloads, and versioned playback events for an optional parent application.
+Plarr is a standalone browser player and versioned media API. It direct-plays compatible sources, remuxes browser-compatible streams when only the container must change, and builds an adaptive HLS ladder with FFmpeg when transcoding is required. It also exposes deterministic audio/subtitle selection, original and transcoded downloads, and versioned playback events for an optional parent application.
 
-Google Cast uses Google's Default Media Receiver, so nothing needs to be installed on the television. The sender hands the receiver absolute Plarr HLS and subtitle URLs and keeps playback position, transport, volume, quality, audio, and subtitles under the existing player controls. The receiver must be able to reach the configured `PLARR_PUBLIC_ORIGIN`; Plarr does not add URL signing or authentication.
+Google Cast uses Google's Default Media Receiver, so nothing needs to be installed on the television. The sender hands the receiver absolute Plarr HLS and subtitle URLs and keeps playback position, transport, volume, quality, audio, and subtitles under the existing player controls. The receiver must be able to reach the configured `PLARR_PUBLIC_ORIGIN`.
 
 ## Run
 
@@ -24,7 +24,11 @@ docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build
 
 Do not recreate Plarr from the base Compose file alone on that host. The override requests the GPU and exposes the `compute`, `video`, and `utility` driver capabilities required by CUDA, OpenCL tone mapping, and NVENC.
 
-Configuration: `PLARR_LISTEN_ADDR`, `PLARR_MEDIA_ROOT`, `PLARR_PUBLIC_ORIGIN`, `PLARR_ALLOWED_PARENT_ORIGINS`, `PLARR_CACHE_DIR`, `PLARR_CACHE_LIMIT` (10 GB), `PLARR_FFMPEG_PATH`, `PLARR_FFPROBE_PATH`, `PLARR_HARDWARE_ACCELERATION`, `PLARR_RENDITION_LADDER`, and `PLARR_LOG_LEVEL`.
+Configuration: `PLARR_LISTEN_ADDR`, `PLARR_MEDIA_ROOT`, `PLARR_PUBLIC_ORIGIN`, `PLARR_ALLOWED_PARENT_ORIGINS`, `PLARR_API_KEY`, `PLARR_CACHE_DIR`, `PLARR_CACHE_LIMIT` (10 GB), `PLARR_FFMPEG_PATH`, `PLARR_FFPROBE_PATH`, `PLARR_HARDWARE_ACCELERATION`, `PLARR_RENDITION_LADDER`, and `PLARR_LOG_LEVEL`.
+
+### Optional playback grants
+
+Set `PLARR_API_KEY` to require a file-scoped playback grant for every media, download, preview, subtitle, HLS, and playback-session request. Create a grant server-to-server with `POST /api/v1/auth/playback-grants` and JSON `{"apiKey":"…","mediaId":"<base64url-relative-path>"}`. The returned `playbackToken` must be passed to media requests as `playback_token`; the web player receives it as `playbackToken` in the hash route. Grants must be activated within one minute, then remain valid while requests are active and for one hour after the latest valid request. They are reusable by browsers and Cast receivers and are lost on restart. Leave `PLARR_API_KEY` empty to retain unauthenticated standalone operation.
 
 Hardware order in `auto` mode is NVIDIA, Intel QSV, Intel/AMD VAAPI, then the required CPU fallback. The image uses Jellyfin FFmpeg so HDR-to-SDR playback on NVIDIA can attempt a zero-copy CUDA tone map with NVENC. It then tries OpenCL tone mapping for compatible native Linux drivers, software tone mapping with NVENC, and finally full CPU processing. A hardware strategy that fails at runtime is remembered and skipped for the rest of the process lifetime. Merely listing an FFmpeg encoder or filter is not considered proof that the runtime device is usable.
 

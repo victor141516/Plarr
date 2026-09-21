@@ -4,6 +4,7 @@ import type {
   PlaybackTranscodeDiagnostics,
   TranscodeAttemptStatus,
 } from "./playerTypes";
+import { isPlaybackAuthorizationFailure, playbackURL } from "./playbackURL";
 
 type DiagnosticFetcher = (
   input: RequestInfo | URL,
@@ -15,6 +16,8 @@ export interface TranscodeDiagnosticsOptions {
   active: Readonly<Ref<boolean>>;
   pollMilliseconds?: number;
   fetcher?: DiagnosticFetcher;
+  playbackToken?: string;
+  onAuthorizationExpired?: () => void;
 }
 
 const statuses = new Set<TranscodeAttemptStatus>([
@@ -63,7 +66,10 @@ function parseDiagnostics(value: unknown): PlaybackTranscodeDiagnostics {
 export function useTranscodeDiagnostics(options: TranscodeDiagnosticsOptions) {
   const diagnostics = shallowRef<PlaybackTranscodeDiagnostics | null>(null);
   const error = shallowRef("");
-  const endpoint = `/api/v1/playback/sessions/${encodeURIComponent(options.sessionId)}/diagnostics`;
+  const endpoint = playbackURL(
+    `/api/v1/playback/sessions/${encodeURIComponent(options.sessionId)}/diagnostics`,
+    options.playbackToken,
+  );
   let timer: number | undefined;
   let controller: AbortController | undefined;
 
@@ -81,7 +87,12 @@ export function useTranscodeDiagnostics(options: TranscodeDiagnosticsOptions) {
     try {
       const fetcher = options.fetcher ?? fetch;
       const response = await fetcher(endpoint, { signal: request.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        if (isPlaybackAuthorizationFailure(response.status)) {
+          options.onAuthorizationExpired?.();
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
       diagnostics.value = parseDiagnostics(await response.json());
       error.value = "";
     } catch (reason) {

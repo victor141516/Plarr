@@ -3,10 +3,12 @@ import type { Ref, ShallowRef } from "vue";
 import type { PlarrEventType } from "./protocol";
 import type { PlaybackMode, PlayerProbe, PlayerTrack } from "./playerTypes";
 import { playbackWindowStart } from "./playbackWindow";
+import { playbackURL } from "./playbackURL";
 
 interface OriginalPlaybackOptions {
   base: string;
   sessionId: string;
+  playbackToken?: string;
   video: Ref<HTMLVideoElement | null>;
   probe: ShallowRef<PlayerProbe | null>;
   selectedAudioTrack: Ref<PlayerTrack | undefined>;
@@ -87,7 +89,7 @@ export function useOriginalPlayback(options: OriginalPlaybackOptions) {
       generation: String(generation),
     });
     if (start > 0) query.set("start", start.toFixed(3));
-    return `${options.base}/hls/master.m3u8?${query}`;
+    return playbackURL(`${options.base}/hls/master.m3u8?${query}`, options.playbackToken);
   }
 
   function originalHLSURL(start: number, generation: number) {
@@ -99,7 +101,10 @@ export function useOriginalPlayback(options: OriginalPlaybackOptions) {
     if (options.audio.value !== undefined) {
       query.set("audio", String(options.audio.value));
     }
-    return `${options.base}/hls/original/master.m3u8?${query}`;
+    return playbackURL(
+      `${options.base}/hls/original/master.m3u8?${query}`,
+      options.playbackToken,
+    );
   }
 
   function loadNativeHLSAt(target: number, resume: boolean) {
@@ -154,7 +159,10 @@ export function useOriginalPlayback(options: OriginalPlaybackOptions) {
       options.setMode("original-direct");
       options.diagnosticMode.value = "original-direct";
       options.timeline.offset = 0;
-      element.src = `${options.base}/original?session=${encodeURIComponent(options.sessionId)}`;
+      element.src = playbackURL(
+        `${options.base}/original?session=${encodeURIComponent(options.sessionId)}`,
+        options.playbackToken,
+      );
       element.load();
       options.armStartupWatchdog();
     } else {
@@ -166,7 +174,10 @@ export function useOriginalPlayback(options: OriginalPlaybackOptions) {
       if (options.audio.value !== undefined) {
         query.set("audio", String(options.audio.value));
       }
-      element.src = `${options.base}/remux.mp4?${query}`;
+      element.src = playbackURL(
+        `${options.base}/remux.mp4?${query}`,
+        options.playbackToken,
+      );
       element.load();
       options.armStartupWatchdog();
     }

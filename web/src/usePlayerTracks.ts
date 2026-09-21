@@ -2,11 +2,13 @@ import type Hls from "hls.js";
 import { computed, onBeforeUnmount, ref, type Ref, type ShallowRef } from "vue";
 import { chooseTrack, type PlarrEventType } from "./protocol";
 import type { PlaybackMode, PlayerProbe, PlayerTrack } from "./playerTypes";
+import { playbackURL } from "./playbackURL";
 
 interface PlayerTracksOptions {
   probe: ShallowRef<PlayerProbe | null>;
   video: Ref<HTMLVideoElement | null>;
   base: string;
+  playbackToken?: string;
   params: URLSearchParams;
   current: Ref<number>;
   menu: Ref<string>;
@@ -90,7 +92,10 @@ export function usePlayerTracks(options: PlayerTracksOptions) {
     node.kind = "subtitles";
     node.label = selected?.name || "Subtitles";
     node.srclang = selected?.language || "und";
-    node.src = `${options.base}/subtitles/${subtitle.value}.vtt`;
+    node.src = playbackURL(
+      `${options.base}/subtitles/${subtitle.value}.vtt`,
+      options.playbackToken,
+    );
     node.default = subtitlesEnabled.value;
     element.appendChild(node);
     if (subtitleTimer) window.clearTimeout(subtitleTimer);

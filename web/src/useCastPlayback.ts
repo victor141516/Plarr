@@ -21,6 +21,7 @@ interface CastPlaybackOptions {
   adapter?: CastAdapter;
   mediaBase: string;
   sessionId: string;
+  playbackToken?: string;
   title: ComputedRef<string>;
   duration: Ref<number>;
   current: Ref<number>;
@@ -108,6 +109,7 @@ export function useCastPlayback(options: CastPlaybackOptions) {
           subtitleTracks: options.subtitleTracks.value,
           autoplay,
           playbackRate: options.playbackRate.value,
+          playbackToken: options.playbackToken,
         }),
       );
       return true;

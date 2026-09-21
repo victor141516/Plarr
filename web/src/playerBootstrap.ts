@@ -1,4 +1,5 @@
 import type { PlayerConfig, PlayerProbe } from "./playerTypes";
+import { playbackURL } from "./playbackURL";
 
 async function responseJSON<T>(response: Response): Promise<T> {
   if (response.ok) return response.json() as Promise<T>;
@@ -11,15 +12,23 @@ async function responseJSON<T>(response: Response): Promise<T> {
 export async function loadPlayerBootstrap(
   mediaBase: string,
   signal: AbortSignal,
+  playbackToken = "",
+  onConfig?: (config: PlayerConfig) => void,
+  onAuthorizationExpired?: () => void,
 ): Promise<{ config: PlayerConfig; probe: PlayerProbe }> {
-  const [config, probe] = await Promise.all([
-    fetch("/api/v1/config", { signal }).then((response) =>
-      responseJSON<PlayerConfig>(response),
-    ),
-    fetch(`${mediaBase}/probe`, { signal }).then((response) =>
-      responseJSON<PlayerProbe>(response),
-    ),
-  ]);
+  const config = await fetch("/api/v1/config", { signal }).then((response) =>
+    responseJSON<PlayerConfig>(response),
+  );
+  onConfig?.(config);
+  const probe = await fetch(
+    playbackURL(`${mediaBase}/probe`, playbackToken),
+    { signal },
+  ).then((response) => {
+    if (response.status === 401 || response.status === 403) {
+      onAuthorizationExpired?.();
+    }
+    return responseJSON<PlayerProbe>(response);
+  });
   return { config, probe };
 }
 
