@@ -43,6 +43,7 @@ import { useVideoFraming } from "./useVideoFraming";
 import { measureNetworkBandwidth } from "./bandwidthProbe";
 import { AVSyncRecoveryLimiter } from "./avSyncGuard";
 import { useCastPlayback } from "./useCastPlayback";
+import { playbackURL } from "./playbackURL";
 import {
   type PlaybackMode,
   type PlayerProbe,
@@ -97,13 +98,20 @@ export function usePlarrPlayer() {
     hasNext,
   } = parsePlayerLocation(location.hash);
   const trustedParent = shallowRef(false);
+  const playbackToken = params.get("playbackToken") || "";
+  let authorizationExpiredNotified = false;
+  let authorizationExpired = (): void => undefined;
   const {
     imageURL: timelinePreviewURL,
     request: previewTimeline,
     clear: clearTimelinePreview,
     initialize: initializeTimelinePreview,
     stopPreload: stopTimelinePreload,
-  } = useTimelinePreview({ base });
+  } = useTimelinePreview({
+    base,
+    playbackToken,
+    onAuthorizationExpired: () => authorizationExpired(),
+  });
   const {
     absoluteTime,
     bufferAhead,
@@ -174,9 +182,24 @@ export function usePlarrPlayer() {
     parentOrigin,
     mediaPath,
   });
+  authorizationExpired = () => {
+    if (authorizationExpiredNotified) return;
+    authorizationExpiredNotified = true;
+    emit("authorization-expired", {
+      quality: quality.value,
+      colorPreference: colorPreference.value,
+      playbackRate: video.value?.playbackRate || 1,
+    });
+    failPlayback(
+      "Playback authorization expired.",
+      "The playback grant is no longer valid.",
+    );
+  };
   const { cancelActiveJobs, resumeActiveJobs } = usePlaybackLease({
     sessionId,
     active: computed(() => loading.value || playing.value),
+    playbackToken,
+    onAuthorizationExpired: authorizationExpired,
   });
   useTelevisionRemote({
     enabled: params.get("tv") === "1",
@@ -225,6 +248,8 @@ export function usePlarrPlayer() {
   } = useTranscodeDiagnostics({
     sessionId,
     active: computed(() => diagnosticsOpen.value || loading.value),
+    playbackToken,
+    onAuthorizationExpired: authorizationExpired,
   });
   const {
     blockAutomaticOriginal,
@@ -256,6 +281,8 @@ export function usePlarrPlayer() {
     params,
     base,
     sessionId,
+    playbackToken,
+    onAuthorizationExpired: authorizationExpired,
     emit,
     setMode: (value) => (mode = value),
     resetElement,
@@ -309,6 +336,7 @@ export function usePlarrPlayer() {
     probe,
     video,
     base,
+    playbackToken,
     params,
     current,
     menu,
@@ -330,6 +358,7 @@ export function usePlarrPlayer() {
   } = useOriginalPlayback({
     base,
     sessionId,
+    playbackToken,
     video,
     probe,
     selectedAudioTrack,
@@ -437,6 +466,7 @@ export function usePlarrPlayer() {
   const castPlayback = useCastPlayback({
     mediaBase: base,
     sessionId,
+    playbackToken,
     title: displayTitle,
     duration,
     current,
@@ -590,7 +620,7 @@ export function usePlarrPlayer() {
     try {
       const refreshBandwidthProbe = () => {
         void measureNetworkBandwidth(
-          `${base}/bandwidth-probe`,
+          playbackURL(`${base}/bandwidth-probe`, playbackToken),
           controller.signal,
         )
           .then((measured) => {
@@ -614,6 +644,13 @@ export function usePlarrPlayer() {
       const { config: cfg, probe: p } = await loadPlayerBootstrap(
         base,
         controller.signal,
+        playbackToken,
+        (config) => {
+          trustedParent.value =
+            !!parentOrigin &&
+            (config.allowedParentOrigins || []).includes(parentOrigin);
+        },
+        authorizationExpired,
       );
       if (disposed) return;
       probe.value = p;
@@ -626,9 +663,6 @@ export function usePlarrPlayer() {
         Number(p.videoDurationSeconds) || duration.value,
         sessionId,
       );
-      trustedParent.value =
-        !!parentOrigin &&
-        (cfg.allowedParentOrigins || []).includes(parentOrigin);
       if (parentOrigin && !trustedParent.value)
         console.warn("Ignoring an untrusted parent origin");
       initializeTracks();

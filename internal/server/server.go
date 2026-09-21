@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ import (
 	"github.com/victor141516/Plarr/internal/cache"
 	"github.com/victor141516/Plarr/internal/config"
 	"github.com/victor141516/Plarr/internal/media"
+	"github.com/victor141516/Plarr/internal/playbackgrant"
 	"github.com/victor141516/Plarr/internal/probe"
 	"github.com/victor141516/Plarr/internal/transcode"
 )
@@ -35,21 +38,30 @@ type Server struct {
 	Transcode *transcode.Manager
 	Cache     *cache.Manager
 	Log       *slog.Logger
+	Grants    *playbackgrant.Manager
 
 	playbackGenerationMu sync.Mutex
 	playbackGenerations  map[string]uint64
 }
 
 func (s *Server) Handler() http.Handler {
+	if s.Config.APIKey != "" && s.Grants == nil {
+		s.Grants = playbackgrant.New(playbackgrant.Options{})
+	}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.Recoverer, s.log, s.headers)
 	r.Get("/healthz", s.health)
 	r.Get("/api/v1/config", s.clientConfig)
 	r.Get("/api/v1/capabilities", s.capabilities)
-	r.Post("/api/v1/playback/sessions/{session}/heartbeat", s.playbackHeartbeat)
-	r.Post("/api/v1/playback/sessions/{session}/close", s.playbackClose)
-	r.Get("/api/v1/playback/sessions/{session}/diagnostics", s.playbackDiagnostics)
+	r.Post("/api/v1/auth/playback-grants", s.createPlaybackGrant)
+	r.Group(func(r chi.Router) {
+		r.Use(s.requirePlaybackGrantForSession)
+		r.Post("/api/v1/playback/sessions/{session}/heartbeat", s.playbackHeartbeat)
+		r.Post("/api/v1/playback/sessions/{session}/close", s.playbackClose)
+		r.Get("/api/v1/playback/sessions/{session}/diagnostics", s.playbackDiagnostics)
+	})
 	r.Route("/api/v1/media/{id}", func(r chi.Router) {
+		r.Use(s.requirePlaybackGrantForMedia)
 		r.Get("/bandwidth-probe", s.bandwidthProbe)
 		r.Get("/probe", s.probe)
 		r.Get("/preview.jpg", s.preview)
@@ -73,6 +85,110 @@ func (s *Server) Handler() http.Handler {
 	return r
 }
 
+type resolvedMediaKey struct{}
+
+type resolvedMedia struct {
+	path string
+	rel  string
+}
+
+type playbackGrantRequest struct {
+	APIKey  string `json:"apiKey"`
+	MediaID string `json:"mediaId"`
+}
+
+func (s *Server) createPlaybackGrant(w http.ResponseWriter, r *http.Request) {
+	if s.Config.APIKey == "" || s.Grants == nil {
+		problem(w, http.StatusNotFound, "playback_grants_disabled", "Playback grants are not enabled.")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	var request playbackGrantRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.APIKey == "" || request.MediaID == "" {
+		problem(w, http.StatusBadRequest, "invalid_playback_grant_request", "The playback grant request is invalid.")
+		return
+	}
+	expected := sha256.Sum256([]byte(s.Config.APIKey))
+	provided := sha256.Sum256([]byte(request.APIKey))
+	if subtle.ConstantTimeCompare(expected[:], provided[:]) != 1 {
+		problem(w, http.StatusUnauthorized, "invalid_api_key", "The API key is invalid.")
+		return
+	}
+	_, rel, err := s.Media.ResolveID(request.MediaID)
+	if err != nil {
+		problem(w, http.StatusBadRequest, "invalid_media", "The requested media path is invalid or unsupported.")
+		return
+	}
+	token, err := s.Grants.Issue(rel)
+	if err != nil {
+		if s.Log != nil {
+			s.Log.Error("playback grant issuance failed", "operation", "playback_grant.issue", "error", err)
+		}
+		problem(w, http.StatusServiceUnavailable, "playback_grant_unavailable", "A playback grant could not be created.")
+		return
+	}
+	jsonResponse(w, http.StatusCreated, map[string]any{
+		"playbackToken":              token,
+		"activationExpiresInSeconds": 60,
+	})
+}
+
+func (s *Server) requirePlaybackGrantForMedia(next http.Handler) http.Handler {
+	if s.Config.APIKey == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, rel, err := s.Media.ResolveID(chi.URLParam(r, "id"))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				problem(w, http.StatusNotFound, "media_not_found", "The requested media does not exist.")
+			} else {
+				problem(w, http.StatusBadRequest, "invalid_media", "The requested media path is invalid or unsupported.")
+			}
+			return
+		}
+		release, err := s.Grants.Acquire(r.URL.Query().Get("playback_token"), rel)
+		if err != nil {
+			playbackGrantProblem(w, err)
+			return
+		}
+		defer release()
+		w.Header().Set("Cache-Control", "private, no-store")
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), resolvedMediaKey{}, resolvedMedia{path: path, rel: rel})))
+	})
+}
+
+func (s *Server) requirePlaybackGrantForSession(next http.Handler) http.Handler {
+	if s.Config.APIKey == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		release, err := s.Grants.AcquireAny(r.URL.Query().Get("playback_token"))
+		if err != nil {
+			playbackGrantProblem(w, err)
+			return
+		}
+		defer release()
+		w.Header().Set("Cache-Control", "private, no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func playbackGrantProblem(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, playbackgrant.ErrMissing):
+		problem(w, http.StatusUnauthorized, "playback_grant_missing", "A playback grant is required.")
+	case errors.Is(err, playbackgrant.ErrExpired):
+		problem(w, http.StatusUnauthorized, "playback_grant_expired", "The playback grant has expired.")
+	case errors.Is(err, playbackgrant.ErrMismatch):
+		problem(w, http.StatusForbidden, "playback_grant_wrong_media", "The playback grant belongs to another media file.")
+	default:
+		problem(w, http.StatusUnauthorized, "playback_grant_invalid", "A valid playback grant is required.")
+	}
+}
+
 const bandwidthProbeSize = 256 * 1024
 
 var bandwidthProbePayload = func() []byte {
@@ -88,7 +204,11 @@ var bandwidthProbePayload = func() []byte {
 }()
 
 func (s *Server) bandwidthProbe(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
+	if s.Config.APIKey != "" {
+		w.Header().Set("Cache-Control", "private, no-store")
+	} else {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.Itoa(len(bandwidthProbePayload)))
 	_, _ = w.Write(bandwidthProbePayload)
@@ -165,6 +285,9 @@ func (s *Server) playbackDiagnostics(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, s.Transcode.StrategyDiagnostics(session))
 }
 func (s *Server) resolved(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	if resolved, ok := r.Context().Value(resolvedMediaKey{}).(resolvedMedia); ok {
+		return resolved.path, resolved.rel, true
+	}
 	path, rel, err := s.Media.ResolveID(chi.URLParam(r, "id"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -218,7 +341,11 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if s.Config.APIKey != "" {
+		w.Header().Set("Cache-Control", "private, no-store")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
 	http.ServeFile(w, r, target)
 }
 
@@ -294,7 +421,11 @@ func (s *Server) originalDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(path)))
-	w.Header().Set("Cache-Control", "private, no-transform")
+	if s.Config.APIKey != "" {
+		w.Header().Set("Cache-Control", "private, no-store, no-transform")
+	} else {
+		w.Header().Set("Cache-Control", "private, no-transform")
+	}
 	s.original(w, r)
 }
 
@@ -383,6 +514,9 @@ func playbackParams(r *http.Request, duration float64) (float64, string, string)
 	}
 	if generation, ok := validPlaybackGeneration(r.URL.Query().Get("generation")); ok && generation > 0 {
 		q.Set("generation", strconv.FormatUint(generation, 10))
+	}
+	if token := r.URL.Query().Get("playback_token"); token != "" {
+		q.Set("playback_token", token)
 	}
 	encoded := q.Encode()
 	if encoded != "" {
@@ -589,7 +723,7 @@ func (s *Server) audioPlaylist(w http.ResponseWriter, r *http.Request) {
 	start, session, _ := playbackParams(r, 0)
 	audioMode := r.URL.Query().Get("audioMode")
 	copySource := audioMode == "copy"
-	query := playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), -1, audioMode)
+	query := playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), -1, audioMode, r.URL.Query().Get("playback_token"))
 	target, err := s.Transcode.AudioHLS(r.Context(), path, index, start, session, copySource)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -707,7 +841,7 @@ func selectedAudioIndex(p probe.Result, raw string) int {
 	return -1
 }
 
-func playbackQueryWithAudio(start float64, session, generation string, audioIndex int, audioMode ...string) string {
+func playbackQueryWithAudio(start float64, session, generation string, audioIndex int, options ...string) string {
 	q := url.Values{}
 	if start > 0 {
 		q.Set("start", strconv.FormatFloat(start, 'f', 3, 64))
@@ -721,8 +855,11 @@ func playbackQueryWithAudio(start float64, session, generation string, audioInde
 	if audioIndex >= 0 {
 		q.Set("audio", strconv.Itoa(audioIndex))
 	}
-	if len(audioMode) > 0 && audioMode[0] != "" {
-		q.Set("audioMode", audioMode[0])
+	if len(options) > 0 && options[0] != "" {
+		q.Set("audioMode", options[0])
+	}
+	if len(options) > 1 && options[1] != "" {
+		q.Set("playback_token", options[1])
 	}
 	if encoded := q.Encode(); encoded != "" {
 		return "?" + encoded
@@ -758,7 +895,7 @@ func (s *Server) originalMaster(w http.ResponseWriter, r *http.Request) {
 			audioMode = "original"
 		}
 	}
-	query := playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), audioIndex, audioMode)
+	query := playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), audioIndex, audioMode, r.URL.Query().Get("playback_token"))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	_, _ = w.Write([]byte(originalMasterManifest(p, audioIndex, audioCodec, copyAudio, query)))
 }
@@ -852,7 +989,7 @@ func (s *Server) originalVideoVariant(w http.ResponseWriter, r *http.Request) {
 			audioMode = "original"
 		}
 	}
-	query := playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), audioIndex, audioMode)
+	query := playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), audioIndex, audioMode, r.URL.Query().Get("playback_token"))
 	target, err := s.Transcode.OriginalHLS(r.Context(), path, start, session, videoCodec, audioIndex, copyAudio)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

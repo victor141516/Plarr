@@ -1,4 +1,5 @@
 import { onScopeDispose, shallowRef } from "vue";
+import { isPlaybackAuthorizationFailure, playbackURL } from "./playbackURL";
 
 type PreviewFetcher = (
   input: RequestInfo | URL,
@@ -16,6 +17,8 @@ export interface TimelinePreviewOptions {
   cacheSize?: number;
   refinementDepth?: number;
   preloadConcurrency?: number;
+  playbackToken?: string;
+  onAuthorizationExpired?: () => void;
 }
 
 function buildTernaryLevels(duration: number, depth: number): number[][] {
@@ -169,10 +172,18 @@ export function useTimelinePreview(options: TimelinePreviewOptions) {
     try {
       const query = new URLSearchParams({ time: String(bucket) });
       const response = await (options.fetcher ?? fetch)(
-        `${options.base}/preview.jpg?${query}`,
+        playbackURL(
+          `${options.base}/preview.jpg?${query}`,
+          options.playbackToken,
+        ),
         { signal: requestController.signal },
       );
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        if (isPlaybackAuthorizationFailure(response.status)) {
+          options.onAuthorizationExpired?.();
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
       const nextURL = URL.createObjectURL(await response.blob());
       if (requestController.signal.aborted || disposed) {
         URL.revokeObjectURL(nextURL);
@@ -258,7 +269,7 @@ export function useTimelinePreview(options: TimelinePreviewOptions) {
     batchController = new AbortController();
     try {
       const response = await (options.fetcher ?? fetch)(
-        `${options.base}/previews/start`,
+        playbackURL(`${options.base}/previews/start`, options.playbackToken),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -270,7 +281,12 @@ export function useTimelinePreview(options: TimelinePreviewOptions) {
           signal: batchController.signal,
         },
       );
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        if (isPlaybackAuthorizationFailure(response.status)) {
+          options.onAuthorizationExpired?.();
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError")) {
         console.warn(
@@ -290,7 +306,7 @@ export function useTimelinePreview(options: TimelinePreviewOptions) {
     batchController?.abort();
     batchController = undefined;
     if (batchStarted && batchSession) {
-      void (options.fetcher ?? fetch)(`${options.base}/previews/stop`, {
+      void (options.fetcher ?? fetch)(playbackURL(`${options.base}/previews/stop`, options.playbackToken), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session: batchSession }),

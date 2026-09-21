@@ -11,6 +11,7 @@ import { manualLevelForReload } from "./playerState";
 import { playbackWindowStart } from "./playbackWindow";
 import { chooseTrack, type PlarrEventType } from "./protocol";
 import type { PlaybackMode, PlayerProbe, QualityLevel } from "./playerTypes";
+import { playbackURL } from "./playbackURL";
 
 interface TimelineState {
   offset: number;
@@ -38,6 +39,8 @@ interface AdaptivePlaybackOptions {
   params: URLSearchParams;
   base: string;
   sessionId: string;
+  playbackToken?: string;
+  onAuthorizationExpired?: () => void;
   emit: (type: PlarrEventType, payload?: Record<string, unknown>) => void;
   setMode: (mode: PlaybackMode) => void;
   resetElement: () => void;
@@ -124,7 +127,10 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
       generation: String(generation),
     });
     if (start > 0) query.set("start", start.toFixed(3));
-    return `${options.base}/hls/master.m3u8?${query}`;
+    return playbackURL(
+      `${options.base}/hls/master.m3u8?${query}`,
+      options.playbackToken,
+    );
   }
 
   function loadAdaptiveAt(
@@ -259,6 +265,16 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
     });
     instance.on(Hls.Events.ERROR, (_, data) => {
       if (hls !== instance) return;
+      const networkStatus = Number(
+        (data as unknown as { response?: { code?: number; status?: number }; networkDetails?: { status?: number } }).response?.code ??
+          (data as unknown as { response?: { status?: number } }).response?.status ??
+          (data as unknown as { networkDetails?: { status?: number } }).networkDetails?.status ??
+          0,
+      );
+      if (networkStatus === 401 || networkStatus === 403) {
+        options.onAuthorizationExpired?.();
+        return;
+      }
       const playableBuffer = options.video.value
         ? options.bufferAhead(options.video.value)
         : 0;
