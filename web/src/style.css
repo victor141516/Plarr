@@ -459,6 +459,11 @@ header .icon-button {
   overflow: visible;
   padding: 0;
 }
+.adjustments-popover {
+  min-width: 310px;
+  overflow: visible;
+  padding: 0;
+}
 .framing-popover {
   min-width: 290px;
   overflow: visible;

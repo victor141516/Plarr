@@ -1,4 +1,5 @@
 import Hls from "hls.js";
+import { useTelevisionRemote } from "./useTelevisionRemote";
 import {
   computed,
   nextTick,
@@ -7,6 +8,7 @@ import {
   ref,
   shallowRef,
   watch,
+  type CSSProperties,
 } from "vue";
 import { chooseInitialPlayback } from "./initialPlayback";
 import {
@@ -33,6 +35,10 @@ import { useMediaElementEvents } from "./useMediaElementEvents";
 import { parsePlayerLocation } from "./playerLocation";
 import { useTranscodeDiagnostics } from "./useTranscodeDiagnostics";
 import { useTimelinePreview } from "./useTimelinePreview";
+import {
+  useVideoAdjustments,
+  videoGammaFilterId,
+} from "./useVideoAdjustments";
 import { useVideoFraming } from "./useVideoFraming";
 import { measureNetworkBandwidth } from "./bandwidthProbe";
 import { AVSyncRecoveryLimiter } from "./avSyncGuard";
@@ -81,8 +87,15 @@ export function usePlarrPlayer() {
   let playbackGeneration = 0;
   const avSyncRecoveryLimiter = new AVSyncRecoveryLimiter();
   let initController: AbortController | undefined;
-  const { base, mediaId, mediaPath, params, parentOrigin, hasPrevious, hasNext } =
-    parsePlayerLocation(location.hash);
+  const {
+    base,
+    mediaId,
+    mediaPath,
+    params,
+    parentOrigin,
+    hasPrevious,
+    hasNext,
+  } = parsePlayerLocation(location.hash);
   const trustedParent = shallowRef(false);
   const {
     imageURL: timelinePreviewURL,
@@ -119,7 +132,7 @@ export function usePlarrPlayer() {
   const {
     crop: videoFrameCrop,
     frameStyle: videoFrameStyle,
-    videoStyle: videoContentStyle,
+    videoStyle: framingVideoStyle,
     adjust: adjustVideoFrame,
     reset: resetVideoFrame,
   } = useVideoFraming({
@@ -130,6 +143,18 @@ export function usePlarrPlayer() {
       return width / Math.max(1, height);
     }),
   });
+  const {
+    values: videoAdjustments,
+    adjusted: videoAppearanceAdjusted,
+    gammaExponent,
+    style: videoAdjustmentStyle,
+    set: setVideoAdjustment,
+    reset: resetVideoAdjustments,
+  } = useVideoAdjustments();
+  const videoContentStyle = computed<CSSProperties>(() => ({
+    ...framingVideoStyle.value,
+    ...videoAdjustmentStyle.value,
+  }));
   watch(fatal, (message) => {
     if (message) {
       stopTimelinePreload();
@@ -152,6 +177,14 @@ export function usePlarrPlayer() {
   const { cancelActiveJobs, resumeActiveJobs } = usePlaybackLease({
     sessionId,
     active: computed(() => loading.value || playing.value),
+  });
+  useTelevisionRemote({
+    enabled: params.get("tv") === "1",
+    video,
+    menu,
+    diagnosticsOpen,
+    close,
+    toggle,
   });
   let stopPlaybackEngine: () => void = () => undefined;
   let canUseOriginalAutomatically = () => false;
@@ -875,6 +908,12 @@ export function usePlarrPlayer() {
     videoContentStyle,
     adjustVideoFrame,
     resetVideoFrame,
+    videoAdjustments,
+    videoAppearanceAdjusted,
+    gammaExponent,
+    videoGammaFilterId,
+    setVideoAdjustment,
+    resetVideoAdjustments,
     timelinePreviewURL,
     previewTimeline,
     clearTimelinePreview,

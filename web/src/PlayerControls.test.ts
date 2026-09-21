@@ -33,6 +33,13 @@ const defaultProps = {
   playbackRate: 1,
   timelinePreviewURL: "",
   videoFrameCrop: { top: 0, right: 0, bottom: 0, left: 0 },
+  videoAdjustments: {
+    brightness: 1,
+    contrast: 1,
+    saturation: 1,
+    gamma: 1,
+  },
+  videoAppearanceAdjusted: false,
   hasPrevious: true,
   hasNext: true,
   castAvailable: false,
@@ -110,6 +117,40 @@ describe("PlayerControls", () => {
 
     const button = view.getByRole("button", { name: "Video framing adjusted" });
     expect(button.querySelector(".framing-indicator")).toBeTruthy();
+  });
+
+  it("adjusts the video appearance live and resets it without closing the menu", async () => {
+    const view = render(PlayerControls, {
+      props: { ...defaultProps, menu: "appearance" },
+    });
+
+    await fireEvent.input(view.getByRole("slider", { name: "Brightness" }), {
+      target: { value: "1.25" },
+    });
+    expect(view.emitted().setVideoAdjustment).toEqual([["brightness", 1.25]]);
+    expect(view.emitted()["update:menu"]).toBeUndefined();
+
+    await fireEvent.click(view.getByRole("button", { name: "Reset" }));
+    expect(view.emitted().resetVideoAdjustments).toHaveLength(1);
+  });
+
+  it("marks the appearance control when an adjustment is active", () => {
+    const view = render(PlayerControls, {
+      props: {
+        ...defaultProps,
+        videoAppearanceAdjusted: true,
+        videoAdjustments: {
+          ...defaultProps.videoAdjustments,
+          contrast: 1.2,
+        },
+      },
+    });
+
+    expect(
+      view
+        .getByRole("button", { name: "Video appearance adjusted" })
+        .classList.contains("selected"),
+    ).toBe(true);
   });
 
   it("shows HDR controls only for HDR sources and disables unavailable original", async () => {

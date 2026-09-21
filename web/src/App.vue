@@ -3,6 +3,7 @@ import { ArrowLeft, Play } from "@lucide/vue";
 import PlaybackDiagnosticsPanel from "./PlaybackDiagnosticsPanel.vue";
 import PlayerControls from "./PlayerControls.vue";
 import MobileSeekHint from "./MobileSeekHint.vue";
+import VideoGammaFilter from "./VideoGammaFilter.vue";
 import { usePlarrPlayer } from "./usePlarrPlayer";
 
 const {
@@ -68,6 +69,12 @@ const {
   videoContentStyle,
   adjustVideoFrame,
   resetVideoFrame,
+  videoAdjustments,
+  videoAppearanceAdjusted,
+  gammaExponent,
+  videoGammaFilterId,
+  setVideoAdjustment,
+  resetVideoAdjustments,
   timelinePreviewURL,
   previewTimeline,
   clearTimelinePreview,
@@ -82,6 +89,10 @@ const {
 
 <template>
   <main class="player" @mousemove="reveal" @touchstart="reveal">
+    <VideoGammaFilter
+      :filter-id="videoGammaFilterId"
+      :exponent="gammaExponent"
+    />
     <div
       class="video-surface"
       @pointerdown="beginSurfacePress"
@@ -166,6 +177,8 @@ const {
       :playback-rate="playbackRate"
       :timeline-preview-u-r-l="timelinePreviewURL"
       :video-frame-crop="videoFrameCrop"
+      :video-adjustments="videoAdjustments"
+      :video-appearance-adjusted="videoAppearanceAdjusted"
       :has-previous="hasPrevious"
       :has-next="hasNext"
       :cast-available="castAvailable"
@@ -189,6 +202,8 @@ const {
       @select-playback-rate="setPlaybackRate"
       @adjust-video-frame="adjustVideoFrame"
       @reset-video-frame="resetVideoFrame"
+      @set-video-adjustment="setVideoAdjustment"
+      @reset-video-adjustments="resetVideoAdjustments"
       @timeline-preview="previewTimeline"
       @clear-timeline-preview="clearTimelinePreview"
       @cast="requestCast"

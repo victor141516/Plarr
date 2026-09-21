@@ -24,6 +24,7 @@ import {
   RotateCw,
   SkipBack,
   SkipForward,
+  SlidersHorizontal,
   Volume1,
   Volume2,
   VolumeX,
@@ -37,6 +38,7 @@ import PlayerOverflowMenu, { type OverflowAction } from "./PlayerOverflowMenu.vu
 import PlayerTrackOptions from "./PlayerTrackOptions.vue";
 import QualityMenuContent from "./QualityMenuContent.vue";
 import SeekButton from "./SeekButton.vue";
+import VideoAdjustmentsMenu from "./VideoAdjustmentsMenu.vue";
 import VideoFramingMenu from "./VideoFramingMenu.vue";
 import { playbackRateLabel } from "./playbackRate";
 import { useEventListener } from "./useEventListener";
@@ -45,6 +47,10 @@ import {
   type ResponsiveControlDefinition,
 } from "./useResponsiveControls";
 import type { VideoFrameCrop, VideoFrameSide } from "./useVideoFraming";
+import type {
+  VideoAdjustmentName,
+  VideoAdjustments,
+} from "./useVideoAdjustments";
 
 const props = defineProps<{
   visible: boolean;
@@ -74,6 +80,8 @@ const props = defineProps<{
   playbackRate: number;
   timelinePreviewURL: string;
   videoFrameCrop: Readonly<VideoFrameCrop>;
+  videoAdjustments: Readonly<VideoAdjustments>;
+  videoAppearanceAdjusted: boolean;
   hasPrevious: boolean;
   hasNext: boolean;
   castAvailable: boolean;
@@ -102,6 +110,8 @@ const emit = defineEmits<{
   clearTimelinePreview: [];
   adjustVideoFrame: [side: VideoFrameSide, delta: number];
   resetVideoFrame: [];
+  setVideoAdjustment: [name: VideoAdjustmentName, value: number];
+  resetVideoAdjustments: [];
   cast: [];
 }>();
 
@@ -140,6 +150,7 @@ const controlDefinitions = computed<ResponsiveControlDefinition[]>(() => [
   { id: "diagnostics", zone: "right", priority: 1, overflow: true },
   { id: "volume", zone: "left", priority: 2, overflow: true },
   { id: "pip", zone: "right", priority: 3, overflow: true },
+  { id: "appearance", zone: "right", priority: 4, overflow: true },
   { id: "framing", zone: "right", priority: 4, overflow: true },
   { id: "speed", zone: "right", priority: 4, overflow: true },
   { id: "audio", zone: "right", priority: 5, overflow: true },
@@ -201,6 +212,13 @@ const settingActions = computed<OverflowAction[]>(() => [
   { id: "audio", label: "Audio tracks", icon: AudioLines, submenu: true },
   { id: "subtitles", label: "Subtitles", icon: Captions, submenu: true },
   { id: "quality", label: "Quality", icon: Settings2, submenu: true },
+  {
+    id: "appearance",
+    label: "Video appearance",
+    icon: SlidersHorizontal,
+    selected: props.videoAppearanceAdjusted,
+    submenu: true,
+  },
   { id: "framing", label: "Video framing", icon: Crop, submenu: true },
   { id: "speed", label: "Playback speed", icon: Gauge, submenu: true },
   {
@@ -217,6 +235,13 @@ function toggleMenu(name: string) {
 
 function adjustVideoFrame(side: VideoFrameSide, delta: number): void {
   emit("adjustVideoFrame", side, delta);
+}
+
+function setVideoAdjustment(
+  name: VideoAdjustmentName,
+  value: number,
+): void {
+  emit("setVideoAdjustment", name, value);
 }
 
 function selectAudio(index: number | undefined): void {
@@ -428,6 +453,23 @@ useEventListener<PointerEvent>(document, "pointerdown", (event) => {
           </div>
         </div>
 
+        <div v-if="isVisible('appearance')" class="popover-wrap" data-control-id="appearance" data-player-menu="appearance">
+          <button
+            class="icon-button"
+            :class="{ selected: videoAppearanceAdjusted }"
+            :aria-label="videoAppearanceAdjusted ? 'Video appearance adjusted' : 'Video appearance'"
+            :title="videoAppearanceAdjusted ? 'Video appearance adjusted' : 'Video appearance'"
+            @click="toggleMenu('appearance')"
+          ><SlidersHorizontal /></button>
+          <div v-if="menu === 'appearance'" class="popover adjustments-popover">
+            <VideoAdjustmentsMenu
+              :values="videoAdjustments"
+              @change="setVideoAdjustment"
+              @reset="emit('resetVideoAdjustments')"
+            />
+          </div>
+        </div>
+
         <div v-if="isVisible('framing')" class="popover-wrap" data-control-id="framing" data-player-menu="framing">
           <button
             class="icon-button framing-button"
@@ -502,6 +544,7 @@ useEventListener<PointerEvent>(document, "pointerdown", (event) => {
                 @select-color-mode="emit('selectColorMode', $event)"
               />
             </template>
+            <template #appearance><VideoAdjustmentsMenu :values="videoAdjustments" @change="setVideoAdjustment" @reset="emit('resetVideoAdjustments')" /></template>
             <template #framing><VideoFramingMenu :crop="videoFrameCrop" @adjust="adjustVideoFrame" @reset="emit('resetVideoFrame')" /></template>
             <template #speed><PlaybackSpeedControl :value="playbackRate" @select="emit('selectPlaybackRate', $event)" /></template>
           </PlayerOverflowMenu>
