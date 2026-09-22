@@ -44,6 +44,7 @@ import { measureNetworkBandwidth } from "./bandwidthProbe";
 import { AVSyncRecoveryLimiter } from "./avSyncGuard";
 import { useCastPlayback } from "./useCastPlayback";
 import { playbackURL } from "./playbackURL";
+import { playbackNeedsPreviewPriority } from "./previewPlaybackPriority";
 import {
   type PlaybackMode,
   type PlayerProbe,
@@ -106,6 +107,8 @@ export function usePlarrPlayer() {
     request: previewTimeline,
     clear: clearTimelinePreview,
     initialize: initializeTimelinePreview,
+    pausePreload: pauseTimelinePreload,
+    resumePreload: resumeTimelinePreload,
     stopPreload: stopTimelinePreload,
   } = useTimelinePreview({
     base,
@@ -137,6 +140,17 @@ export function usePlarrPlayer() {
     loadOriginalAt: (target, resume, automatic) =>
       loadOriginalAt(target, resume, automatic),
   });
+  watch(
+    [bufferedSeconds, playing, loading],
+    ([buffered, isPlaying, isLoading]) => {
+      if (playbackNeedsPreviewPriority(buffered, isPlaying, isLoading)) {
+        pauseTimelinePreload();
+        return;
+      }
+      resumeTimelinePreload();
+    },
+    { immediate: true },
+  );
   const {
     crop: videoFrameCrop,
     frameStyle: videoFrameStyle,

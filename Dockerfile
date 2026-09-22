@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/plarr ./cmd/plarr
 FROM debian:bookworm-slim
 ARG TARGETARCH
 ARG JELLYFIN_FFMPEG_VERSION=8.1.2-4
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ocl-icd-libopencl1 tini \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ocl-icd-libopencl1 tini util-linux \
     && curl -fsSLo /tmp/jellyfin-ffmpeg.deb "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v${JELLYFIN_FFMPEG_VERSION}/jellyfin-ffmpeg8_${JELLYFIN_FFMPEG_VERSION}-bookworm_${TARGETARCH}.deb" \
     && apt-get install -y --no-install-recommends /tmp/jellyfin-ffmpeg.deb \
     && ln -s /usr/lib/jellyfin-ffmpeg/ffmpeg /usr/local/bin/ffmpeg \

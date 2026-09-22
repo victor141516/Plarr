@@ -306,4 +306,50 @@ describe("useTimelinePreview", () => {
     await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
     expect(fetcher.mock.calls[2]?.[0]).toBe("/media/previews/stop");
   });
+
+  it("keeps preview generation suspended until playback has enough buffer", async () => {
+    const fetcher = vi.fn(
+      (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith("/previews/start")) {
+          return Promise.resolve(new Response(null, { status: 202 }));
+        }
+        if (String(input).endsWith("/previews/stop")) {
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        });
+      },
+    );
+    let preview!: ReturnType<typeof useTimelinePreview>;
+    render(
+      defineComponent({
+        setup() {
+          preview = useTimelinePreview({
+            base: "/media",
+            fetcher,
+            refinementDepth: 2,
+          });
+          return () => null;
+        },
+      }),
+    );
+
+    preview.pausePreload();
+    preview.initialize(900, "playback-session");
+    expect(fetcher).not.toHaveBeenCalled();
+
+    preview.resumePreload();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    expect(fetcher.mock.calls[0]?.[0]).toBe("/media/previews/start");
+    expect(fetcher.mock.calls[1]?.[0]).toBe(
+      "/media/preview.jpg?time=450",
+    );
+
+    preview.pausePreload();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    expect(fetcher.mock.calls[2]?.[0]).toBe("/media/previews/stop");
+  });
 });

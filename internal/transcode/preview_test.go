@@ -16,6 +16,7 @@ func TestPreviewGenerationHasASeparateBoundedWorkerPool(t *testing.T) {
 		cache.New(t.TempDir(), 1<<20),
 		nil,
 		nil,
+		15,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if got := cap(manager.previewSlots); got != 1 {

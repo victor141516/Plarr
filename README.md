@@ -24,7 +24,9 @@ docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build
 
 Do not recreate Plarr from the base Compose file alone on that host. The override requests the GPU and exposes the `compute`, `video`, and `utility` driver capabilities required by CUDA, OpenCL tone mapping, and NVENC.
 
-Configuration: `PLARR_LISTEN_ADDR`, `PLARR_MEDIA_ROOT`, `PLARR_PUBLIC_ORIGIN`, `PLARR_ALLOWED_PARENT_ORIGINS`, `PLARR_API_KEY`, `PLARR_CACHE_DIR`, `PLARR_CACHE_LIMIT` (10 GB), `PLARR_FFMPEG_PATH`, `PLARR_FFPROBE_PATH`, `PLARR_HARDWARE_ACCELERATION`, `PLARR_RENDITION_LADDER`, and `PLARR_LOG_LEVEL`.
+Configuration: `PLARR_LISTEN_ADDR`, `PLARR_MEDIA_ROOT`, `PLARR_PUBLIC_ORIGIN`, `PLARR_ALLOWED_PARENT_ORIGINS`, `PLARR_API_KEY`, `PLARR_CACHE_DIR`, `PLARR_CACHE_LIMIT` (10 GB), `PLARR_FFMPEG_PATH`, `PLARR_FFPROBE_PATH`, `PLARR_HARDWARE_ACCELERATION`, `PLARR_RENDITION_LADDER`, `PLARR_PREVIEW_CPU_PERCENT` (15), and `PLARR_LOG_LEVEL`.
+
+Timeline preview generation runs at idle I/O priority and is hard-limited to `PLARR_PREVIEW_CPU_PERCENT` of the CPU capacity assigned to the container. The web player suspends preview generation while active playback has less than 30 seconds buffered.
 
 ### Optional playback grants
 

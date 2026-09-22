@@ -29,7 +29,7 @@ func main() {
 		log.Error("cache startup cleanup failed", "error", err)
 		os.Exit(1)
 	}
-	transcoder := transcode.New(cfg.FFmpegPath, cacheManager, cfg.Renditions, cfg.Hardware, log)
+	transcoder := transcode.New(cfg.FFmpegPath, cacheManager, cfg.Renditions, cfg.Hardware, cfg.PreviewCPUPercent, log)
 	app := &server.Server{Config: cfg, Media: media.Resolver{Root: cfg.MediaRoot}, Probe: probe.Client{Path: cfg.FFprobePath}, Transcode: transcoder, Cache: cacheManager, Log: log}
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

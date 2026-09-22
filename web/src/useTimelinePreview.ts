@@ -72,8 +72,10 @@ export function useTimelinePreview(options: TimelinePreviewOptions) {
   let planRevision = 0;
   let preloading = false;
   let batchSession = "";
+  let plannedSession = "";
   let batchStarted = false;
   let batchController: AbortController | undefined;
+  let suspended = false;
   let disposed = false;
   let warned = false;
 
@@ -319,6 +321,8 @@ export function useTimelinePreview(options: TimelinePreviewOptions) {
 
   function initialize(duration: number, session = ""): void {
     if (!ensurePlan(duration)) return;
+    plannedSession = session;
+    if (suspended) return;
     if (session) {
       void startBatch(duration, session);
       return;
@@ -328,16 +332,43 @@ export function useTimelinePreview(options: TimelinePreviewOptions) {
 
   function preload(duration: number): void {
     if (!ensurePlan(duration)) return;
+    suspended = false;
     preloading = true;
     fillWorkers();
   }
 
+  function pausePreload(): void {
+    if (suspended) return;
+    suspended = true;
+    preloading = false;
+    planRevision += 1;
+    preloadQueue = [];
+    preloadPending.clear();
+    for (const active of running.values()) active.controller.abort();
+    stopBatch();
+  }
+
+  function resumePreload(): void {
+    if (disposed || !suspended || plannedDuration <= 0) return;
+    suspended = false;
+    preloading = true;
+    preloadStage = 0;
+    prepareNextStage();
+    if (plannedSession) {
+      void startBatch(plannedDuration, plannedSession);
+      return;
+    }
+    fillWorkers();
+  }
+
   function stopPreload(): void {
+    suspended = true;
     preloading = false;
     planRevision += 1;
     preloadStages = [];
     preloadQueue = [];
     preloadPending.clear();
+    plannedSession = "";
     for (const active of running.values()) {
       active.controller.abort();
     }
@@ -356,5 +387,14 @@ export function useTimelinePreview(options: TimelinePreviewOptions) {
     stopBatch();
   });
 
-  return { imageURL, request, clear, initialize, preload, stopPreload };
+  return {
+    imageURL,
+    request,
+    clear,
+    initialize,
+    preload,
+    pausePreload,
+    resumePreload,
+    stopPreload,
+  };
 }

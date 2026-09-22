@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -232,14 +231,19 @@ func (m *Manager) runTimelinePreviewStrategy(ctx context.Context, path string, d
 		return frames, err
 	}
 	outputPattern := filepath.Join(temporary, "frame-%03d.jpg")
-	cmd := exec.CommandContext(ctx, m.FFmpeg, previewBatchArgs(manifestPath, outputPattern, len(frames), cuda)...)
+	cmd := m.previewCommand(ctx, previewBatchArgs(manifestPath, outputPattern, len(frames), cuda))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
+	stopThrottle, err := m.startPreviewCommand(ctx, cmd)
+	if err != nil {
 		return frames, err
 	}
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		stopThrottle()
+		done <- err
+	}()
 
 	publish := func() {
 		for index, frame := range frames {

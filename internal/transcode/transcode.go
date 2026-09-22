@@ -48,6 +48,7 @@ type Manager struct {
 	sessionLeaseSeq     uint64
 	sessionIdle         time.Duration
 	previewSlots        chan struct{}
+	previewResources    previewResources
 }
 type job struct {
 	done      chan struct{}
@@ -63,8 +64,14 @@ type sessionLease struct {
 	timer      *time.Timer
 }
 
-func New(ffmpeg string, c *cache.Manager, r []config.Rendition, hw []string, log *slog.Logger) *Manager {
-	m := &Manager{FFmpeg: ffmpeg, Cache: c, Renditions: r, Hardware: hw, Log: log, running: map[string]*job{}, encoders: map[string]bool{}, filters: map[string]bool{}, failedStrategies: map[string]bool{}, strategyDiagnostics: map[string]*playbackStrategyTrace{}, sessionLeases: map[string]*sessionLease{}, sessionIdle: defaultSessionIdle, previewSlots: make(chan struct{}, 1)}
+func New(ffmpeg string, c *cache.Manager, r []config.Rendition, hw []string, previewCPUPercent float64, log *slog.Logger) *Manager {
+	resources := detectPreviewResources(previewCPUPercent)
+	m := &Manager{FFmpeg: ffmpeg, Cache: c, Renditions: r, Hardware: hw, Log: log, running: map[string]*job{}, encoders: map[string]bool{}, filters: map[string]bool{}, failedStrategies: map[string]bool{}, strategyDiagnostics: map[string]*playbackStrategyTrace{}, sessionLeases: map[string]*sessionLease{}, sessionIdle: defaultSessionIdle, previewSlots: make(chan struct{}, 1), previewResources: resources}
+	if resources.limiterAvailable {
+		log.Info("timeline preview resource budget configured", "operation", "preview.resources", "assignedCPUs", resources.assignedCPUs, "cpuPercent", previewCPUPercent, "limit", resources.limit)
+	} else {
+		log.Warn("timeline preview CPU limiter unavailable; thread and priority safeguards remain active", "operation", "preview.resources", "assignedCPUs", resources.assignedCPUs, "cpuPercent", previewCPUPercent)
+	}
 	if out, err := exec.Command(ffmpeg, "-hide_banner", "-encoders").CombinedOutput(); err == nil {
 		for _, encoder := range []string{"h264_nvenc", "hevc_nvenc", "h264_qsv", "h264_vaapi", "hevc_vaapi", "libx265"} {
 			m.encoders[encoder] = strings.Contains(string(out), encoder)
@@ -845,7 +852,7 @@ fallback:
 		_ = os.Remove(temporary)
 		cudaStrategy := videoStrategy{name: "preview-nvidia-cuda"}
 		if m.enabled("nvidia") && m.filters["scale_cuda"] && !m.strategyFailed(cudaStrategy, ColorSDR) {
-			cudaRunErr := m.run(ctx, previewFrameCUDAArgs(path, second, temporary))
+			cudaRunErr := m.runPreview(ctx, previewFrameCUDAArgs(path, second, temporary))
 			cudaErr := cudaRunErr
 			if cudaErr == nil {
 				_, cudaErr = os.Stat(temporary)
@@ -872,7 +879,7 @@ fallback:
 				_ = os.Remove(temporary)
 			}
 		}
-		if err := m.run(ctx, previewFrameArgs(path, second, temporary)); err != nil {
+		if err := m.runPreview(ctx, previewFrameArgs(path, second, temporary)); err != nil {
 			_ = os.Remove(temporary)
 			return err
 		}

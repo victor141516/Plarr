@@ -20,6 +20,7 @@ type Config struct {
 	ListenAddr, MediaRoot, PublicOrigin, CacheDir, FFmpegPath, FFprobePath, FrontendDir string
 	APIKey                                                                              string
 	CacheLimit                                                                          int64
+	PreviewCPUPercent                                                                   float64
 	Hardware                                                                            []string
 	Renditions                                                                          []Rendition
 	AllowedParentOrigins                                                                map[string]bool
@@ -28,7 +29,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	cwd, _ := os.Getwd()
-	c := Config{ListenAddr: env("PLARR_LISTEN_ADDR", ":8090"), MediaRoot: env("PLARR_MEDIA_ROOT", filepath.Join(cwd, "media")), PublicOrigin: strings.TrimRight(env("PLARR_PUBLIC_ORIGIN", "http://localhost:8090"), "/"), CacheDir: env("PLARR_CACHE_DIR", filepath.Join(cwd, "cache")), FFmpegPath: env("PLARR_FFMPEG_PATH", "ffmpeg"), FFprobePath: env("PLARR_FFPROBE_PATH", "ffprobe"), FrontendDir: env("PLARR_FRONTEND_DIR", filepath.Join(cwd, "web", "dist")), APIKey: strings.TrimSpace(os.Getenv("PLARR_API_KEY")), CacheLimit: bytes("PLARR_CACHE_LIMIT", 10<<30), Hardware: list("PLARR_HARDWARE_ACCELERATION", "auto"), AllowedParentOrigins: map[string]bool{}, LogLevel: level("PLARR_LOG_LEVEL", slog.LevelInfo), Renditions: []Rendition{{"2160p", 2160, 16_000_000}, {"1080p", 1080, 8_000_000}, {"720p", 720, 5_000_000}, {"480p", 480, 2_500_000}, {"360p", 360, 1_000_000}, {"240p", 240, 350_000}}}
+	c := Config{ListenAddr: env("PLARR_LISTEN_ADDR", ":8090"), MediaRoot: env("PLARR_MEDIA_ROOT", filepath.Join(cwd, "media")), PublicOrigin: strings.TrimRight(env("PLARR_PUBLIC_ORIGIN", "http://localhost:8090"), "/"), CacheDir: env("PLARR_CACHE_DIR", filepath.Join(cwd, "cache")), FFmpegPath: env("PLARR_FFMPEG_PATH", "ffmpeg"), FFprobePath: env("PLARR_FFPROBE_PATH", "ffprobe"), FrontendDir: env("PLARR_FRONTEND_DIR", filepath.Join(cwd, "web", "dist")), APIKey: strings.TrimSpace(os.Getenv("PLARR_API_KEY")), CacheLimit: bytes("PLARR_CACHE_LIMIT", 10<<30), PreviewCPUPercent: percentage("PLARR_PREVIEW_CPU_PERCENT", 15), Hardware: list("PLARR_HARDWARE_ACCELERATION", "auto"), AllowedParentOrigins: map[string]bool{}, LogLevel: level("PLARR_LOG_LEVEL", slog.LevelInfo), Renditions: []Rendition{{"2160p", 2160, 16_000_000}, {"1080p", 1080, 8_000_000}, {"720p", 720, 5_000_000}, {"480p", 480, 2_500_000}, {"360p", 360, 1_000_000}, {"240p", 240, 350_000}}}
 	if raw := strings.TrimSpace(os.Getenv("PLARR_RENDITION_LADDER")); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &c.Renditions); err != nil {
 			return c, errors.New("PLARR_RENDITION_LADDER must be valid JSON")
@@ -102,4 +103,16 @@ func bytes(n string, d int64) int64 {
 		return d
 	}
 	return num * mult
+}
+
+func percentage(name string, fallback float64) float64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || value <= 0 || value > 100 {
+		return fallback
+	}
+	return value
 }
