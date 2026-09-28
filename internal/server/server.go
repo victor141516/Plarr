@@ -455,7 +455,7 @@ func (s *Server) remux(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	committed, err := s.Transcode.StreamRemux(r.Context(), path, p, start, audioIndex, w)
+	committed, err := s.Transcode.StreamRemux(r.Context(), path, p, start, audioIndex, w, r.URL.Query().Get("audioMode") == "copy")
 	if err == nil || errors.Is(err, context.Canceled) {
 		return
 	}
@@ -649,7 +649,28 @@ func (s *Server) master(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprintf(w, "#EXT-X-VERSION:%d\n", version)
 	selectedAudio := selectedAudioIndex(p, r.URL.Query().Get("audio"))
+	requestedMP3Copy := r.URL.Query().Get("audioMode") == "copy"
+	audioCodecs := map[string]bool{}
+	maxAudioBitrate := 0
 	for _, a := range p.Audio {
+		copyAudio := originalHLSAudioCanCopy(a.CodecName, requestedMP3Copy)
+		outputCodec := "aac"
+		if copyAudio && strings.EqualFold(a.CodecName, "mp3") {
+			outputCodec = "mp3"
+		}
+		audioCodecs[outputCodec] = true
+		bitrate := transcode.CompatibilityAudioBitrate(a.Channels)
+		if copyAudio {
+			if sourceBitrate, err := strconv.Atoi(a.BitRate); err == nil && sourceBitrate > 0 {
+				bitrate = sourceBitrate
+			}
+		}
+		maxAudioBitrate = max(maxAudioBitrate, bitrate)
+		mode := "encode"
+		if copyAudio {
+			mode = "copy"
+		}
+		audioQuery := appendPlaybackAudioParams(query, mode, outputCodec, a.Channels)
 		language := a.Tags["language"]
 		if language == "" {
 			language = "und"
@@ -662,7 +683,7 @@ func (s *Server) master(w http.ResponseWriter, r *http.Request) {
 		if a.Index == selectedAudio {
 			def = "YES"
 		}
-		fmt.Fprintf(w, "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"%s\",LANGUAGE=\"%s\",DEFAULT=%s,AUTOSELECT=YES,URI=\"audio/%d/index.m3u8%s\"\n", manifestValue(name), manifestValue(language), def, a.Index, query)
+		fmt.Fprintf(w, "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"%s\",LANGUAGE=\"%s\",DEFAULT=%s,AUTOSELECT=YES,URI=\"audio/%d/index.m3u8%s\"\n", manifestValue(name), manifestValue(language), def, a.Index, audioQuery)
 	}
 	renditions := s.Config.Renditions
 	if p.Video != nil {
@@ -685,11 +706,49 @@ func (s *Server) master(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(p.Audio) > 0 {
 			audioAttr = ",AUDIO=\"audio\""
-			codecs += ",mp4a.40.2"
+			if audioCodecs["aac"] {
+				codecs += ",mp4a.40.2"
+			}
+			if audioCodecs["mp3"] {
+				codecs += ",mp4a.40.34"
+			}
 		}
-		fmt.Fprintf(w, "#EXT-X-STREAM-INF:BANDWIDTH=%d,AVERAGE-BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=\"%s\",NAME=\"%s\"%s%s\n", int(float64(v.VideoBitrate)*1.15)+48_000, v.VideoBitrate+48_000, width, v.Height, codecs, v.Label, audioAttr, videoRange)
+		fmt.Fprintf(w, "#EXT-X-STREAM-INF:BANDWIDTH=%d,AVERAGE-BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=\"%s\",NAME=\"%s\"%s%s\n", int(float64(v.VideoBitrate)*1.15)+maxAudioBitrate, v.VideoBitrate+maxAudioBitrate, width, v.Height, codecs, v.Label, audioAttr, videoRange)
 		fmt.Fprintf(w, "%s/index.m3u8%s\n", v.Label, query)
 	}
+}
+
+func appendPlaybackAudioParams(query, mode, codec string, channels int) string {
+	if query == "" {
+		query = "?"
+	} else {
+		query += "&"
+	}
+	return query + "audioMode=" + url.QueryEscape(mode) + "&audioCodec=" + url.QueryEscape(codec) + "&audioChannels=" + strconv.Itoa(channels)
+}
+
+func requestedAudioChannels(raw string) int {
+	channels, err := strconv.Atoi(raw)
+	if err != nil || channels < 1 || channels > 8 {
+		return 2
+	}
+	return channels
+}
+
+func selectedAudioChannels(p probe.Result, index int) int {
+	for _, track := range p.Audio {
+		if track.Index == index {
+			return requestedAudioChannels(strconv.Itoa(track.Channels))
+		}
+	}
+	return 2
+}
+
+func appendPlaybackChannelCount(query string, channels int) string {
+	if query == "" {
+		return "?audioChannels=" + strconv.Itoa(channels)
+	}
+	return query + "&audioChannels=" + strconv.Itoa(channels)
 }
 
 func requestedRenditions(all []config.Rendition, requested string) []config.Rendition {
@@ -723,8 +782,13 @@ func (s *Server) audioPlaylist(w http.ResponseWriter, r *http.Request) {
 	start, session, _ := playbackParams(r, 0)
 	audioMode := r.URL.Query().Get("audioMode")
 	copySource := audioMode == "copy"
-	query := playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), -1, audioMode, r.URL.Query().Get("playback_token"))
-	target, err := s.Transcode.AudioHLS(r.Context(), path, index, start, session, copySource)
+	codec := r.URL.Query().Get("audioCodec")
+	if codec != "mp3" {
+		codec = "aac"
+	}
+	channels := requestedAudioChannels(r.URL.Query().Get("audioChannels"))
+	query := appendPlaybackAudioParams(playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), -1, "", r.URL.Query().Get("playback_token")), audioMode, codec, channels)
+	target, err := s.Transcode.AudioHLS(r.Context(), path, index, start, session, copySource, codec, channels)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -740,7 +804,7 @@ func (s *Server) audioPlaylist(w http.ResponseWriter, r *http.Request) {
 	servePlaylist(w, target, query)
 }
 
-var audioSegmentName = regexp.MustCompile(`^audio-\d{5}\.aac$`)
+var audioSegmentName = regexp.MustCompile(`^audio-\d{5}\.(?:aac|ts)$`)
 
 func (s *Server) audioSegment(w http.ResponseWriter, r *http.Request) {
 	if !s.acceptPlaybackGeneration(w, r, false) {
@@ -763,7 +827,16 @@ func (s *Server) audioSegment(w http.ResponseWriter, r *http.Request) {
 	start, session, _ := playbackParams(r, 0)
 	audioMode := r.URL.Query().Get("audioMode")
 	copySource := audioMode == "copy"
-	target, err := s.Transcode.EnsureAudioHLSSegment(r.Context(), path, index, start, session, copySource, name)
+	codec := r.URL.Query().Get("audioCodec")
+	if codec != "mp3" {
+		codec = "aac"
+	}
+	if !strings.HasSuffix(name, transcode.AudioHLSSuffix(copySource, codec)) {
+		problem(w, 400, "invalid_segment", "Audio segment format does not match its codec.")
+		return
+	}
+	channels := requestedAudioChannels(r.URL.Query().Get("audioChannels"))
+	target, err := s.Transcode.EnsureAudioHLSSegment(r.Context(), path, index, start, session, copySource, codec, channels, name)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -779,7 +852,11 @@ func (s *Server) audioSegment(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "audio_failed", "The audio track could not be prepared.")
 		return
 	}
-	w.Header().Set("Content-Type", "audio/aac")
+	if codec == "mp3" && copySource {
+		w.Header().Set("Content-Type", "video/mp2t")
+	} else {
+		w.Header().Set("Content-Type", "audio/aac")
+	}
 	http.ServeFile(w, r, target)
 }
 func (s *Server) variant(w http.ResponseWriter, r *http.Request) {
@@ -886,7 +963,7 @@ func (s *Server) originalMaster(w http.ResponseWriter, r *http.Request) {
 	if !s.cancelPlaybackSource(w, r, session) {
 		return
 	}
-	audioIndex, audioCodec, copyAudio := originalAudioConfig(p, r.URL.Query().Get("audio"))
+	audioIndex, audioCodec, copyAudio := originalAudioConfig(p, r.URL.Query().Get("audio"), r.URL.Query().Get("audioMode") == "copy")
 	audioMode := ""
 	if audioIndex >= 0 {
 		if copyAudio {
@@ -896,6 +973,7 @@ func (s *Server) originalMaster(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	query := playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), audioIndex, audioMode, r.URL.Query().Get("playback_token"))
+	query = appendPlaybackChannelCount(query, selectedAudioChannels(p, audioIndex))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	_, _ = w.Write([]byte(originalMasterManifest(p, audioIndex, audioCodec, copyAudio, query)))
 }
@@ -906,11 +984,29 @@ func originalMasterManifest(p probe.Result, audioIndex int, audioCodec string, c
 	fmt.Fprintln(&manifest, "#EXT-X-VERSION:7")
 	codecs := hlsVideoCodec(p.Video)
 	if audioIndex >= 0 {
-		codecs += ",mp4a.40.2"
+		if copyAudio && audioCodec == "mp3" {
+			codecs += ",mp4a.40.34"
+		} else {
+			codecs += ",mp4a.40.2"
+		}
 	}
 	bandwidth := 1
 	if parsed, parseErr := strconv.Atoi(p.Format.BitRate); parseErr == nil && parsed > 0 {
 		bandwidth = parsed
+	}
+	if audioIndex >= 0 && !copyAudio {
+		for _, track := range p.Audio {
+			if track.Index != audioIndex {
+				continue
+			}
+			encodedBitrate := transcode.CompatibilityAudioBitrate(track.Channels)
+			if originalBitrate, err := strconv.Atoi(track.BitRate); err == nil && originalBitrate > 0 {
+				bandwidth += max(0, encodedBitrate-originalBitrate)
+			} else {
+				bandwidth += encodedBitrate
+			}
+			break
+		}
 	}
 	resolution := ""
 	if p.Video != nil {
@@ -925,12 +1021,12 @@ func originalMasterManifest(p probe.Result, audioIndex int, audioCodec string, c
 	return manifest.String()
 }
 
-func originalAudioConfig(p probe.Result, raw string) (int, string, bool) {
+func originalAudioConfig(p probe.Result, raw string, requestedMP3Copy ...bool) (int, string, bool) {
 	index := selectedAudioIndex(p, raw)
 	for _, track := range p.Audio {
 		if track.Index == index {
 			codec := strings.ToLower(track.CodecName)
-			return index, codec, originalHLSAudioCanCopy(codec)
+			return index, codec, originalHLSAudioCanCopy(codec, len(requestedMP3Copy) > 0 && requestedMP3Copy[0])
 		}
 	}
 	return -1, "", false
@@ -953,10 +1049,12 @@ func hlsVideoCodec(video *probe.Stream) string {
 	}
 }
 
-func originalHLSAudioCanCopy(codec string) bool {
+func originalHLSAudioCanCopy(codec string, requestedMP3Copy ...bool) bool {
 	switch strings.ToLower(codec) {
 	case "aac":
 		return true
+	case "mp3":
+		return len(requestedMP3Copy) > 0 && requestedMP3Copy[0]
 	default:
 		return false
 	}
@@ -980,7 +1078,7 @@ func (s *Server) originalVideoVariant(w http.ResponseWriter, r *http.Request) {
 	if p.Video != nil {
 		videoCodec = p.Video.CodecName
 	}
-	audioIndex, _, copyAudio := originalAudioConfig(p, r.URL.Query().Get("audio"))
+	audioIndex, _, copyAudio := originalAudioConfig(p, r.URL.Query().Get("audio"), r.URL.Query().Get("audioMode") == "copy")
 	audioMode := ""
 	if audioIndex >= 0 {
 		if copyAudio {
@@ -990,7 +1088,9 @@ func (s *Server) originalVideoVariant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	query := playbackQueryWithAudio(start, session, r.URL.Query().Get("generation"), audioIndex, audioMode, r.URL.Query().Get("playback_token"))
-	target, err := s.Transcode.OriginalHLS(r.Context(), path, start, session, videoCodec, audioIndex, copyAudio)
+	channels := selectedAudioChannels(p, audioIndex)
+	query = appendPlaybackChannelCount(query, channels)
+	target, err := s.Transcode.OriginalHLS(r.Context(), path, start, session, videoCodec, audioIndex, copyAudio, channels)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -1092,7 +1192,7 @@ func (s *Server) originalVideoSegment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	copyAudio := r.URL.Query().Get("audioMode") == "copy"
-	target, err := s.Transcode.EnsureOriginalHLSSegment(r.Context(), path, start, session, videoCodec, audioIndex, copyAudio, name)
+	target, err := s.Transcode.EnsureOriginalHLSSegment(r.Context(), path, start, session, videoCodec, audioIndex, copyAudio, name, requestedAudioChannels(r.URL.Query().Get("audioChannels")))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return

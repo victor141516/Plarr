@@ -50,6 +50,14 @@ func TestStreamRemuxTranscodesMP3ForBrowserCompatibility(t *testing.T) {
 	}
 }
 
+func TestStreamRemuxCopiesMP3OnlyWhenRequested(t *testing.T) {
+	args := streamRemuxArgs("movie.mkv", remuxProbe("mp3"), 4534.228, 1, true)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-c:v copy -c:a copy") || slices.Contains(args, "-af") {
+		t.Fatalf("supported MP3 was encoded or filtered instead of copied: %s", joined)
+	}
+}
+
 func TestStreamRemuxDoesNotAddSeekFlagsAtTheBeginning(t *testing.T) {
 	args := streamRemuxArgs("movie.mkv", remuxProbe("aac"), 0, 1)
 	if slices.Contains(args, "-copyts") || slices.Contains(args, "-start_at_zero") || slices.Contains(args, "-ss") {

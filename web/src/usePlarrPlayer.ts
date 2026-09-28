@@ -14,6 +14,8 @@ import { chooseInitialPlayback } from "./initialPlayback";
 import {
   type ColorPreference,
   supportsHDRDelivery,
+  supportsMP3Playback,
+  supportsMP3InMP4,
   supportsSourceMSE,
   supportsSourceVideo,
 } from "./mediaCapabilities";
@@ -45,6 +47,7 @@ import { AVSyncRecoveryLimiter } from "./avSyncGuard";
 import { useCastPlayback } from "./useCastPlayback";
 import { playbackURL } from "./playbackURL";
 import { playbackNeedsPreviewPriority } from "./previewPlaybackPriority";
+import { shouldRetryMP3WithAAC } from "./mp3Fallback";
 import {
   type PlaybackMode,
   type PlayerProbe,
@@ -77,6 +80,10 @@ export function usePlarrPlayer() {
   const sourceVideoSupported = shallowRef(false);
   const sourceMSESupported = shallowRef(false);
   const hdrDeliverySupported = shallowRef(false);
+  const mp3Supported = shallowRef(false);
+  const mp3MP4Supported = shallowRef(false);
+  const mp3CopyRejected = shallowRef(false);
+  const mp3FallbackReason = shallowRef("");
   const availableLevels = ref<QualityLevel[]>([]);
   const configuredLevels = ref<QualityLevel[]>([]);
   let abrTimer: number | undefined,
@@ -256,6 +263,39 @@ export function usePlarrPlayer() {
     cancelActiveJobs();
     emit("playback-error", { message, details });
   }
+  function preferMP3Copy(): boolean {
+    return mp3Supported.value && !mp3CopyRejected.value &&
+      !!probe.value?.audio?.some((track) => track.codec_name?.toLowerCase() === "mp3");
+  }
+
+  function preferMP3CopyForOriginal(): boolean {
+    return preferMP3Copy() && mp3MP4Supported.value;
+  }
+
+  function onCodecFailure(details: string): boolean {
+    if (mode === "native-hls" || !shouldRetryMP3WithAAC({
+      selectedCodec: selectedAudioTrack.value?.codec_name,
+      mp3CopyActive: mode === "adaptive" ? preferMP3Copy() :
+        mode === "original-direct" ? !mp3CopyRejected.value : preferMP3CopyForOriginal(),
+      alreadyRetried: mp3CopyRejected.value,
+      failure: "decode",
+    })) return false;
+    mp3CopyRejected.value = true;
+    mp3FallbackReason.value = details;
+    diagnosticsDecision.value = `MP3 playback failed (${details}); retrying once with AAC compatibility audio.`;
+    const target = timeline.pendingAbsolute ?? current.value;
+    const resume = playing.value || timeline.resumeAfterLoad;
+    const previousMode = mode;
+    queueMicrotask(() => {
+      if (disposed) return;
+      if (previousMode === "adaptive") {
+        loadAdaptiveAt(target, resume);
+      } else {
+        loadOriginalAt(target, resume, isAutomatic());
+      }
+    });
+    return true;
+  }
   const {
     diagnostics: transcodeDiagnostics,
     error: transcodeDiagnosticsError,
@@ -333,6 +373,8 @@ export function usePlarrPlayer() {
     recoverExpiredWindow: (original, target, resume) =>
       recoverExpiredPlaybackWindow(original, target, resume),
     shouldResumePlayback: () => playing.value || timeline.resumeAfterLoad,
+    preferMP3Copy,
+    onCodecFailure,
   });
   stopPlaybackEngine = destroyHls;
   const {
@@ -401,6 +443,8 @@ export function usePlarrPlayer() {
     armStartupWatchdog,
     failPlayback,
     onPlaybackLoad: beginPlaybackLoad,
+    preferMP3Copy: preferMP3CopyForOriginal,
+    mp3CopyRejected: () => mp3CopyRejected.value,
   });
   recoverExpiredPlaybackWindow = (original, target, resume) => {
     if (original) {
@@ -437,6 +481,10 @@ export function usePlarrPlayer() {
     transcodeDiagnosticsError,
     playbackIssue,
     reactiveAVSyncReconciliations,
+    mp3CopyRequested: computed(() => diagnosticMode.value === "adaptive" ? preferMP3Copy() :
+      diagnosticMode.value === "native-hls" ? false : preferMP3CopyForOriginal()),
+    mp3FallbackUsed: mp3CopyRejected,
+    mp3FallbackReason,
     isAutomatic,
     canDirect,
     canRemux,
@@ -618,6 +666,7 @@ export function usePlarrPlayer() {
     armStartupWatchdog,
     clearStartupWatchdog,
     failPlayback,
+    onCodecFailure,
   });
 
   async function init() {
@@ -684,6 +733,8 @@ export function usePlarrPlayer() {
       sourceVideoSupported.value = supportsSourceVideo(video.value!, p.video);
       sourceMSESupported.value = supportsSourceMSE(p.video);
       hdrDeliverySupported.value = supportsHDRDelivery(video.value!);
+      mp3Supported.value = supportsMP3Playback(video.value!);
+      mp3MP4Supported.value = supportsMP3InMP4(video.value!);
       attachMediaEvents(video.value!);
       setupPlayback();
       emit("ready");

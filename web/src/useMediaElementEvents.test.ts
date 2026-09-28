@@ -40,6 +40,7 @@ describe("useMediaElementEvents", () => {
             armStartupWatchdog,
             clearStartupWatchdog,
             failPlayback: vi.fn(),
+            onCodecFailure: vi.fn(() => false),
           });
           attach(element);
           return () => null;
@@ -53,5 +54,36 @@ describe("useMediaElementEvents", () => {
 
     element.dispatchEvent(new Event("pause"));
     expect(clearStartupWatchdog).toHaveBeenCalledOnce();
+  });
+
+  it("lets a decoder error retry MP3 before showing a fatal media error", () => {
+    const element = document.createElement("video");
+    Object.defineProperty(element, "error", {
+      configurable: true,
+      value: { code: 3, message: "Unsupported MP3" },
+    });
+    const onCodecFailure = vi.fn(() => true);
+    const failPlayback = vi.fn();
+    render(defineComponent({
+      setup() {
+        const { attach } = useMediaElementEvents({
+          video: shallowRef(element), playing: shallowRef(false),
+          loading: shallowRef(true), current: shallowRef(0), duration: shallowRef(120),
+          timeline: reactive({ pendingAbsolute: 0 as number | undefined, scrubbing: false }),
+          getMode: () => "original-hls", absoluteTime: () => 0,
+          completePendingPosition: vi.fn(), updateBufferedRanges: vi.fn(),
+          applyNativeTracks: vi.fn(), syncVolumeFromElement: vi.fn(),
+          scheduleOriginalFallback: vi.fn(), clearOriginalStall: vi.fn(),
+          emit: vi.fn(), startHeartbeat: vi.fn(), stopHeartbeat: vi.fn(),
+          armStartupWatchdog: vi.fn(), clearStartupWatchdog: vi.fn(),
+          failPlayback, onCodecFailure,
+        });
+        attach(element);
+        return () => null;
+      },
+    }));
+    element.dispatchEvent(new Event("error"));
+    expect(onCodecFailure).toHaveBeenCalledWith("Unsupported MP3");
+    expect(failPlayback).not.toHaveBeenCalled();
   });
 });

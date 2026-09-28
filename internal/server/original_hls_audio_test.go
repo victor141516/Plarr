@@ -33,6 +33,32 @@ func TestOriginalAudioConfigTranscodesMP3ForMSE(t *testing.T) {
 	}
 }
 
+func TestMP3IsCopiedOnlyWhenClientRequestsIt(t *testing.T) {
+	p := probe.Result{Audio: []probe.Stream{{Index: 1, CodecName: "mp3", Channels: 2}}}
+	index, codec, copyAudio := originalAudioConfig(p, "1", true)
+	if index != 1 || codec != "mp3" || !copyAudio {
+		t.Fatalf("requested MP3 copy was not selected: %d %s %t", index, codec, copyAudio)
+	}
+	manifest := originalMasterManifest(p, index, codec, copyAudio, "?audioMode=copy")
+	if !strings.Contains(manifest, `CODECS="avc1.4d4028,mp4a.40.34"`) {
+		t.Fatalf("copied MP3 was advertised as another codec: %s", manifest)
+	}
+	if originalHLSAudioCanCopy("ac3", true) {
+		t.Fatal("client copy request must not bypass incompatible codec conversion")
+	}
+}
+
+func TestPlaybackAudioParamsPreserveCodecAndChannels(t *testing.T) {
+	raw := appendPlaybackAudioParams("?session=player", "copy", "mp3", 6)
+	values, err := url.ParseQuery(raw[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Get("audioMode") != "copy" || values.Get("audioCodec") != "mp3" || values.Get("audioChannels") != "6" {
+		t.Fatalf("audio variant lost its format: %s", raw)
+	}
+}
+
 func TestOriginalMasterUsesOneMuxedAudioVideoVariant(t *testing.T) {
 	video := &probe.Stream{CodecName: "h264", Width: 1920, Height: 800}
 	p := probe.Result{

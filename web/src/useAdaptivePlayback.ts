@@ -62,6 +62,8 @@ interface AdaptivePlaybackOptions {
     resume: boolean,
   ) => void;
   shouldResumePlayback: () => boolean;
+  preferMP3Copy: () => boolean;
+  onCodecFailure: (details: string) => boolean;
 }
 
 export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
@@ -127,6 +129,7 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
       generation: String(generation),
     });
     if (start > 0) query.set("start", start.toFixed(3));
+    if (options.preferMP3Copy()) query.set("audioMode", "copy");
     return playbackURL(
       `${options.base}/hls/master.m3u8?${query}`,
       options.playbackToken,
@@ -311,6 +314,10 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
         return;
       }
       if (!data.fatal) return;
+      if (
+        data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+        options.onCodecFailure(`HLS ${data.details}${data.reason ? `: ${data.reason}` : ""}`)
+      ) return;
       if (
         data.type === Hls.ErrorTypes.NETWORK_ERROR &&
         shouldRetryHLSNetworkError(data, networkRetries)
