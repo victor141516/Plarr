@@ -26,6 +26,7 @@ interface MediaElementEventsOptions {
   armStartupWatchdog: () => void;
   clearStartupWatchdog: () => void;
   failPlayback: (message: string, details: string) => void;
+  onCodecFailure: (details: string) => boolean;
 }
 
 export function useMediaElementEvents(options: MediaElementEventsOptions) {
@@ -97,6 +98,9 @@ export function useMediaElementEvents(options: MediaElementEventsOptions) {
       options.stopHeartbeat();
     });
     listen("error", () => {
+      if (element.error &&
+        (element.error.code === 3 || element.error.code === 4) &&
+        options.onCodecFailure(element.error.message || `Media error code ${element.error.code}`)) return;
       if (element.error && options.timeline.pendingAbsolute === undefined) {
         const details = element.error.message || `Media error code ${element.error.code}`;
         options.failPlayback("Playback failed.", `Media element error: ${details}`);

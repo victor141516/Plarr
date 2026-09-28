@@ -8,7 +8,7 @@ import (
 )
 
 func TestAudioHLSStartsOnTheSameTimelineAsVideoHLS(t *testing.T) {
-	args := audioHLSArgs("movie.mkv", 1, 880, "cache", "cache/index.m3u8", 440, false)
+	args := audioHLSArgs("movie.mkv", 1, 880, "cache", "cache/index.m3u8", 440, false, "aac", 2)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-muxdelay 0 -f hls") {
 		t.Fatalf("audio HLS retained FFmpeg's default 1.4 second MPEG timestamp offset: %s", joined)
@@ -45,12 +45,30 @@ func TestTranscodedVideoHLSKeepsTheSourceTimelineForOriginalSwitches(t *testing.
 }
 
 func TestAdaptiveAudioAlwaysKeepsAndMutesTheSharedPreroll(t *testing.T) {
-	args := audioHLSArgs("movie.mkv", 1, 1286, "cache", "cache/index.m3u8", 643, false)
+	args := audioHLSArgs("movie.mkv", 1, 1286, "cache", "cache/index.m3u8", 643, false, "aac", 2)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-copyts -start_at_zero -ss 1286.000 -noaccurate_seek -i movie.mkv") {
 		t.Fatalf("adaptive audio did not retain the same source pre-roll as every video level: %s", joined)
 	}
 	if !strings.Contains(joined, "-af volume=enable='lt(t,1286.000)':volume=0") {
 		t.Fatalf("audio before the requested playback window was not muted: %s", joined)
+	}
+}
+
+func TestAACCompatibilityPreservesChannelsAndSampleRate(t *testing.T) {
+	for channels, bitrate := range map[int]string{1: "96000", 2: "192000", 6: "320000", 8: "512000"} {
+		args := audioHLSArgs("movie.mkv", 1, 0, "cache", "cache/index.m3u8", 0, false, "aac", channels)
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "-c:a aac -b:a "+bitrate) || strings.Contains(joined, "-ac ") || strings.Contains(joined, "-ar ") {
+			t.Fatalf("%d-channel audio was downmixed or undersampled: %s", channels, joined)
+		}
+	}
+}
+
+func TestCopiedMP3UsesTransportStreamSegments(t *testing.T) {
+	args := audioHLSArgs("movie.mkv", 1, 0, "cache", "cache/index.m3u8", 0, true, "mp3", 2)
+	joined := strings.Join(args, " ")
+	if audioHLSSuffix(true, "mp3") != ".ts" || !strings.Contains(joined, "-c:a copy") || !strings.Contains(joined, "audio-%05d.ts") {
+		t.Fatalf("MP3 copy mode was not packaged as MPEG-TS: %s", joined)
 	}
 }

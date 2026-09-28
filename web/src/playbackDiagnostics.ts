@@ -34,6 +34,9 @@ export type PlaybackDiagnosticInput = {
   transcodeDiagnosticsError?: string;
   playbackIssue?: string;
   reactiveAVSyncReconciliations?: number;
+  mp3CopyRequested?: boolean;
+  mp3FallbackUsed?: boolean;
+  mp3FallbackReason?: string;
 };
 
 function number(value: unknown) {
@@ -119,6 +122,11 @@ function containerName(value: unknown) {
 
 function processingRows(input: PlaybackDiagnosticInput): DiagnosticRow[] {
   const audioCodec = codec(input.selectedAudio?.codec_name);
+  const sourceAudioCodec = String(input.selectedAudio?.codec_name || "").toLowerCase();
+  const copiedAudio = sourceAudioCodec === "aac" ||
+    (sourceAudioCodec === "mp3" && !!input.mp3CopyRequested);
+  const channelCount = number(input.selectedAudio?.channels) || 2;
+  const audioBitrate = channelCount <= 1 ? 96_000 : channelCount === 2 ? 192_000 : channelCount <= 6 ? 320_000 : 512_000;
   if (input.mode === "original-direct")
     return [
       { label: "Delivery", value: "Original file · direct play" },
@@ -131,8 +139,6 @@ function processingRows(input: PlaybackDiagnosticInput): DiagnosticRow[] {
       { label: "Frame timing", value: "Original timestamps" },
     ];
   if (input.mode === "original-hls" || input.mode === "original-remux") {
-    const copiedAudio =
-      String(input.selectedAudio?.codec_name || "").toLowerCase() === "aac";
     return [
       {
         label: "Delivery",
@@ -170,7 +176,9 @@ function processingRows(input: PlaybackDiagnosticInput): DiagnosticRow[] {
       label: "Video",
       value: `${hdr ? "HEVC Main 10" : "H.264"} re-encode${level?.height ? ` · ${level.height}p` : ""}${level?.bitrate ? ` · ${formatBitrate(level.bitrate)}` : ""}${toneMapped ? " · HDR→SDR tone mapping" : hdr ? " · HDR preserved" : ""}`,
     },
-    { label: "Audio", value: "AAC re-encode · 48 kbps · mono" },
+    { label: "Audio", value: copiedAudio
+      ? `Original stream (${audioCodec}) · stream copy`
+      : `${audioCodec} → AAC · compatibility encoding · ${formatBitrate(audioBitrate)} · ${channels(channelCount)}` },
     {
       label: "Container",
       value: hdr ? "HLS / fragmented MP4 segments" : "HLS / MPEG-TS segments",
@@ -403,6 +411,7 @@ export function buildPlaybackDiagnostics(
       title: "Current delivery",
       rows: [
         ...processingRows(input),
+        ...(input.mp3FallbackUsed ? [{ label: "MP3 fallback", value: `${input.mp3FallbackReason || "Decoder error"} · retried with AAC` }] : []),
         {
           label: "Reactive A/V reconciliations",
           value: String(input.reactiveAVSyncReconciliations || 0),

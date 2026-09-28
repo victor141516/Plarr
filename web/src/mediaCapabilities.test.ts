@@ -1,11 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isHDRVideo,
   resolveDeliveryColor,
+  supportsMP3Playback,
+  supportsMP3InMP4,
   videoContentTypes,
 } from "./mediaCapabilities";
 
 describe("media capabilities", () => {
+  afterEach(() => vi.unstubAllGlobals());
   const main10 = {
     codec_name: "hevc",
     profile: "Main 10",
@@ -24,5 +27,18 @@ describe("media capabilities", () => {
     expect(resolveDeliveryColor("sdr", true, true)).toBe("sdr");
     expect(resolveDeliveryColor("auto", true, false)).toBe("sdr");
     expect(resolveDeliveryColor("hdr", false, true)).toBe("sdr");
+  });
+
+  it("requests MP3 copy only when native decoding and MSE packaging are supported", () => {
+    const element = { canPlayType: vi.fn(() => "probably") } as unknown as HTMLVideoElement;
+    vi.stubGlobal("MediaSource", { isTypeSupported: vi.fn((type: string) => type === "audio/mpeg") });
+    expect(supportsMP3Playback(element)).toBe(true);
+    expect(supportsMP3InMP4(element)).toBe(false);
+    vi.stubGlobal("MediaSource", { isTypeSupported: vi.fn(() => false) });
+    expect(supportsMP3Playback(element)).toBe(false);
+    vi.stubGlobal("MediaSource", { isTypeSupported: vi.fn(() => true) });
+    expect(supportsMP3InMP4(element)).toBe(true);
+    element.canPlayType = vi.fn(() => "" as const);
+    expect(supportsMP3Playback(element)).toBe(false);
   });
 });

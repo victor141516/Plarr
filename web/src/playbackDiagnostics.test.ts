@@ -101,6 +101,26 @@ describe("playback diagnostics", () => {
     );
   });
 
+  it("reports copied MP3 and a one-time AAC fallback accurately", () => {
+    const copied = diagnosticsText(buildPlaybackDiagnostics({
+      probe,
+      selectedAudio: { codec_name: "mp3", bit_rate: "320000", channels: 2 },
+      mode: "original-hls", automatic: false, quality: "Original",
+      bandwidthEstimate: 0, bufferSeconds: 2, decision: "", mp3CopyRequested: true,
+    }));
+    expect(copied).toContain("Audio: Original stream (MP3) · stream copy");
+    expect(copied).toContain("mp3".toUpperCase());
+    const fallback = diagnosticsText(buildPlaybackDiagnostics({
+      probe,
+      selectedAudio: { codec_name: "mp3", bit_rate: "320000", channels: 2 },
+      mode: "adaptive", automatic: false, quality: "720p",
+      bandwidthEstimate: 0, bufferSeconds: 2, decision: "",
+      mp3CopyRequested: false, mp3FallbackUsed: true, mp3FallbackReason: "decoder rejected codec",
+    }));
+    expect(fallback).toContain("Audio: MP3 → AAC · compatibility encoding · 192 kbps · 2 (stereo)");
+    expect(fallback).toContain("MP3 fallback: decoder rejected codec · retried with AAC");
+  });
+
   it("exposes the measured signal and adaptive safety margin", () => {
     const text = diagnosticsText(
       buildPlaybackDiagnostics({

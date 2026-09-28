@@ -64,6 +64,14 @@ func TestOriginalHLSTranscodesOnlyCompatibilityAudio(t *testing.T) {
 	}
 }
 
+func TestOriginalHLSCompatibilityPreservesSixChannels(t *testing.T) {
+	args := originalHLSArgs("movie.mkv", 0, "cache", "cache/index.m3u8", 0, "h264", 2, false, 6)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-c:a aac -b:a 320000") || strings.Contains(joined, "-ac ") || strings.Contains(joined, "-ar ") {
+		t.Fatalf("original audio compatibility path altered the source channel layout or sample rate: %s", joined)
+	}
+}
+
 func TestOriginalHLSKeepsAndMutesCompatibilityAudioPreroll(t *testing.T) {
 	args := originalHLSArgs("episode.mkv", 192, "cache", "cache/index.m3u8", 96, "h264", 1, false)
 	joined := strings.Join(args, " ")

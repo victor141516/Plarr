@@ -368,7 +368,7 @@ func TestExpireInterruptedHLSWindowAlsoRetiresPartialAudio(t *testing.T) {
 func TestAudioHLSRequiresFreshWindowAfterItsLeaseWasInterrupted(t *testing.T) {
 	root := t.TempDir()
 	m := &Manager{Cache: cache.New(root, 1<<30), running: map[string]*job{}}
-	key := audioHLSCacheKey(m, "movie.mkv", 1, 120, false)
+	key := audioHLSCacheKey(m, "movie.mkv", 1, 120, false, "aac")
 	dir := filepath.Join(root, key)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
@@ -382,7 +382,7 @@ func TestAudioHLSRequiresFreshWindowAfterItsLeaseWasInterrupted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := m.AudioHLS(context.Background(), "movie.mkv", 1, 120, "session", false); !errors.Is(err, ErrHLSWindowExpired) {
+	if _, err := m.AudioHLS(context.Background(), "movie.mkv", 1, 120, "session", false, "aac", 2); !errors.Is(err, ErrHLSWindowExpired) {
 		t.Fatalf("AudioHLS error = %v, want ErrHLSWindowExpired", err)
 	}
 }

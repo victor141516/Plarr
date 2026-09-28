@@ -23,11 +23,10 @@ import (
 )
 
 const (
-	hlsAudioBitrate      = 48_000
 	hlsSegmentSeconds    = 2
 	hlsVideoCacheVersion = "hls-v13-no-reorder"
-	hlsAudioCacheVersion = "audio-hls-v9-aligned"
-	originalCacheVersion = "original-av-hls-v4-aac-audio"
+	hlsAudioCacheVersion = "audio-hls-v10-preserve-channels"
+	originalCacheVersion = "original-av-hls-v5-preserve-channels"
 	downloadAudioBitrate = 96_000
 	defaultSessionIdle   = 15 * time.Second
 )
@@ -401,7 +400,7 @@ func (m *Manager) ReadyHLS(path string, r config.Rendition, start float64, color
 // fragmented-MP4 playlist. Keeping both streams in the same FFmpeg process
 // gives the muxer ownership of one timeline and one set of segment boundaries.
 // The video is always copied; only incompatible audio is encoded to AAC.
-func (m *Manager) OriginalHLS(ctx context.Context, path string, start float64, session, videoCodec string, audioIndex int, copyAudio bool) (string, error) {
+func (m *Manager) OriginalHLS(ctx context.Context, path string, start float64, session, videoCodec string, audioIndex int, copyAudio bool, channels ...int) (string, error) {
 	startKey := seekKey(start)
 	key := originalHLSCacheKey(m, path, start, videoCodec, audioIndex, copyAudio)
 	dir := filepath.Join(m.Cache.Root, key)
@@ -421,7 +420,7 @@ func (m *Manager) OriginalHLS(ctx context.Context, path string, start float64, s
 		}
 		state := repairPlaylistForResume(target, ".m4s")
 		inputStart := start + state.duration
-		args := originalHLSArgs(path, inputStart, dir, target, state.segments, videoCodec, audioIndex, copyAudio)
+		args := originalHLSArgs(path, inputStart, dir, target, state.segments, videoCodec, audioIndex, copyAudio, channels...)
 		if state.segments == 0 {
 			_ = os.RemoveAll(dir)
 			if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -444,7 +443,7 @@ func (m *Manager) ReadyOriginalHLS(path string, start float64, videoCodec string
 	return target, playlistReady(target, ".m4s")
 }
 
-func originalHLSArgs(path string, start float64, dir, target string, completedSegments int, videoCodec string, audioIndex int, copyAudio bool) []string {
+func originalHLSArgs(path string, start float64, dir, target string, completedSegments int, videoCodec string, audioIndex int, copyAudio bool, channels ...int) []string {
 	seek := strconv.FormatFloat(start, 'f', 3, 64)
 	args := []string{"-hide_banner", "-loglevel", "error", "-y"}
 	if start > 0 {
@@ -467,7 +466,7 @@ func originalHLSArgs(path string, start float64, dir, target string, completedSe
 		if copyAudio {
 			args = append(args, "-c:a", "copy")
 		} else {
-			args = append(args, "-c:a", "aac", "-b:a", strconv.Itoa(hlsAudioBitrate), "-ac", "1", "-ar", "32000")
+			args = append(args, "-c:a", "aac", "-b:a", strconv.Itoa(compatibilityAudioBitrate(firstChannelCount(channels))))
 			if start > 0 {
 				args = append(args, "-af", fmt.Sprintf("volume=enable='lt(t,%.3f)':volume=0", start))
 			}
@@ -488,24 +487,32 @@ func originalHLSArgs(path string, start float64, dir, target string, completedSe
 	)
 }
 
-func (m *Manager) AudioHLS(ctx context.Context, path string, index int, start float64, session string, copySource bool) (string, error) {
+func audioHLSSuffix(copySource bool, sourceCodec string) string {
+	if copySource && sourceCodec == "mp3" {
+		return ".ts"
+	}
+	return ".aac"
+}
+
+func (m *Manager) AudioHLS(ctx context.Context, path string, index int, start float64, session string, copySource bool, sourceCodec string, channels int) (string, error) {
 	startKey := seekKey(start)
-	key := audioHLSCacheKey(m, path, index, start, copySource)
+	key := audioHLSCacheKey(m, path, index, start, copySource, sourceCodec)
 	dir := filepath.Join(m.Cache.Root, key)
 	target := filepath.Join(dir, "index.m3u8")
-	if inspectPlaylist(target, ".aac").complete {
+	suffix := audioHLSSuffix(copySource, sourceCodec)
+	if inspectPlaylist(target, suffix).complete {
 		return target, nil
 	}
-	if m.expireInterruptedHLSWindow(key, target, ".aac") {
+	if m.expireInterruptedHLSWindow(key, target, suffix) {
 		return target, ErrHLSWindowExpired
 	}
-	return target, m.stream(ctx, key, target, ".aac", session, startKey, "audio", func(jobCtx context.Context) error {
+	return target, m.stream(ctx, key, target, suffix, session, startKey, "audio", func(jobCtx context.Context) error {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return err
 		}
-		state := repairPlaylistForResume(target, ".aac")
+		state := repairPlaylistForResume(target, suffix)
 		inputStart := start + state.duration
-		args := audioHLSArgs(path, index, inputStart, dir, target, hlsStartNumber(start, state.segments), copySource)
+		args := audioHLSArgs(path, index, inputStart, dir, target, hlsStartNumber(start, state.segments), copySource, sourceCodec, channels)
 		if err := m.run(jobCtx, args); err != nil {
 			if state.segments == 0 && !errors.Is(err, context.Canceled) {
 				_ = os.RemoveAll(dir)
@@ -516,13 +523,13 @@ func (m *Manager) AudioHLS(ctx context.Context, path string, index int, start fl
 	})
 }
 
-func (m *Manager) ReadyAudioHLS(path string, index int, start float64, copySource bool) (string, bool) {
-	key := audioHLSCacheKey(m, path, index, start, copySource)
+func (m *Manager) ReadyAudioHLS(path string, index int, start float64, copySource bool, sourceCodec string) (string, bool) {
+	key := audioHLSCacheKey(m, path, index, start, copySource, sourceCodec)
 	target := filepath.Join(m.Cache.Root, key, "index.m3u8")
-	return target, playlistReady(target, ".aac")
+	return target, playlistReady(target, audioHLSSuffix(copySource, sourceCodec))
 }
 
-func audioHLSArgs(path string, index int, start float64, dir, target string, startNumber int, copySource bool) []string {
+func audioHLSArgs(path string, index int, start float64, dir, target string, startNumber int, copySource bool, sourceCodec string, channels int) []string {
 	args := []string{"-hide_banner", "-loglevel", "error", "-y"}
 	if start > 0 {
 		args = append(args, "-copyts", "-start_at_zero")
@@ -536,7 +543,7 @@ func audioHLSArgs(path string, index int, start float64, dir, target string, sta
 	if copySource {
 		args = append(args, "copy")
 	} else {
-		args = append(args, "aac", "-b:a", strconv.Itoa(hlsAudioBitrate), "-ac", "1", "-ar", "32000")
+		args = append(args, "aac", "-b:a", strconv.Itoa(compatibilityAudioBitrate(channels)))
 		if start > 0 {
 			args = append(args, "-af", fmt.Sprintf("volume=enable='lt(t,%.3f)':volume=0", start))
 		}
@@ -548,9 +555,36 @@ func audioHLSArgs(path string, index int, start float64, dir, target string, sta
 		"-hls_playlist_type", "event",
 		"-hls_flags", "append_list",
 		"-start_number", strconv.Itoa(startNumber),
-		"-hls_segment_filename", filepath.Join(dir, "audio-%05d.aac"),
+		"-hls_segment_filename", filepath.Join(dir, "audio-%05d"+audioHLSSuffix(copySource, sourceCodec)),
 		target,
 	)
+}
+
+func firstChannelCount(channels []int) int {
+	if len(channels) == 0 {
+		return 2
+	}
+	return channels[0]
+}
+
+// Preserve the source channel layout and sample rate. Audio quality is
+// independent of the selected video rendition.
+func compatibilityAudioBitrate(channels int) int {
+	switch {
+	case channels <= 1:
+		return 96_000
+	case channels == 2:
+		return 192_000
+	case channels <= 6:
+		return 320_000
+	default:
+		return 512_000
+	}
+}
+
+func CompatibilityAudioBitrate(channels int) int { return compatibilityAudioBitrate(channels) }
+func AudioHLSSuffix(copySource bool, sourceCodec string) string {
+	return audioHLSSuffix(copySource, sourceCodec)
 }
 
 func (m *Manager) CancelSession(session string) {
@@ -617,15 +651,18 @@ func (m *Manager) expireSession(session string, generation uint64) {
 
 // StreamRemux keeps the source video bit-for-bit and changes only its
 // container. Audio is copied when MP4 supports it and converted otherwise.
-func streamRemuxArgs(path string, p probe.Result, start float64, audioIndex int) []string {
+func streamRemuxArgs(path string, p probe.Result, start float64, audioIndex int, requestedMP3Copy ...bool) []string {
 	audioCodec := ""
+	audioChannels := 2
 	for _, track := range p.Audio {
 		if audioIndex < 0 || track.Index == audioIndex {
 			audioCodec = strings.ToLower(track.CodecName)
+			audioChannels = track.Channels
 			break
 		}
 	}
-	audioNeedsTranscode := audioCodec != "" && audioCodec != "aac"
+	copyAudio := audioCodec == "aac" || (audioCodec == "mp3" && len(requestedMP3Copy) > 0 && requestedMP3Copy[0])
+	audioNeedsTranscode := audioCodec != "" && !copyAudio
 	seek := strconv.FormatFloat(start, 'f', 3, 64)
 	args := []string{"-hide_banner", "-loglevel", "error"}
 	if start > 0 {
@@ -638,20 +675,20 @@ func streamRemuxArgs(path string, p probe.Result, start float64, audioIndex int)
 		audioMap = fmt.Sprintf("0:%d?", audioIndex)
 	}
 	args = append(args, "-i", path, "-map", "0:v:0", "-map", audioMap, "-c:v", "copy")
-	if audioCodec == "aac" {
+	if copyAudio {
 		args = append(args, "-c:a", "copy")
 	} else {
 		if audioNeedsTranscode && start > 0 {
 			args = append(args, "-af", fmt.Sprintf("volume=enable='lt(t,%s)':volume=0", seek))
 		}
-		args = append(args, "-c:a", "aac", "-b:a", "160k")
+		args = append(args, "-c:a", "aac", "-b:a", strconv.Itoa(compatibilityAudioBitrate(audioChannels)))
 	}
 	args = append(args, "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-frag_duration", "2000000", "-f", "mp4", "pipe:1")
 	return args
 }
 
-func (m *Manager) StreamRemux(ctx context.Context, path string, p probe.Result, start float64, audioIndex int, dst io.Writer) (bool, error) {
-	args := streamRemuxArgs(path, p, start, audioIndex)
+func (m *Manager) StreamRemux(ctx context.Context, path string, p probe.Result, start float64, audioIndex int, dst io.Writer, requestedMP3Copy ...bool) (bool, error) {
+	args := streamRemuxArgs(path, p, start, audioIndex, requestedMP3Copy...)
 	w := &startupWriter{dst: dst, limit: 16 << 10}
 	err := m.runToWriter(ctx, args, w)
 	if err == nil {

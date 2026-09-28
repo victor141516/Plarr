@@ -62,6 +62,19 @@ export function supportsHDRDelivery(element: HTMLVideoElement): boolean {
   );
 }
 
+// A positive capability result is only a hint; the player still needs a
+// codec-error fallback because a source can fail during actual decoding.
+export function supportsMP3Playback(element: HTMLVideoElement): boolean {
+  return element.canPlayType("audio/mpeg") !== "" &&
+    (mediaSourceSupports("audio/mpeg") ||
+      mediaSourceSupports('audio/mp4; codecs="mp4a.40.34"'));
+}
+
+export function supportsMP3InMP4(element: HTMLVideoElement): boolean {
+  return element.canPlayType("audio/mpeg") !== "" &&
+    mediaSourceSupports('audio/mp4; codecs="mp4a.40.34"');
+}
+
 export function resolveDeliveryColor(
   preference: ColorPreference,
   sourceHDR: boolean,

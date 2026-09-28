@@ -155,7 +155,7 @@ func originalHLSCacheKey(m *Manager, path string, start float64, videoCodec stri
 	return m.key(path, originalCacheVersion, videoCodec, strconv.Itoa(audioIndex), audioMode, seekKey(start))
 }
 
-func (m *Manager) EnsureOriginalHLSSegment(ctx context.Context, path string, start float64, session, videoCodec string, audioIndex int, copyAudio bool, name string) (string, error) {
+func (m *Manager) EnsureOriginalHLSSegment(ctx context.Context, path string, start float64, session, videoCodec string, audioIndex int, copyAudio bool, name string, channels ...int) (string, error) {
 	key := originalHLSCacheKey(m, path, start, videoCodec, audioIndex, copyAudio)
 	target := filepath.Join(m.Cache.Root, key, name)
 	if _, err := os.Stat(target); err == nil {
@@ -165,7 +165,7 @@ func (m *Manager) EnsureOriginalHLSSegment(ctx context.Context, path string, sta
 	if inspectPlaylist(playlist, ".m4s").complete {
 		return "", fmt.Errorf("requested original segment is absent from a complete playlist: %w", os.ErrNotExist)
 	}
-	if _, err := m.OriginalHLS(ctx, path, start, session, videoCodec, audioIndex, copyAudio); err != nil {
+	if _, err := m.OriginalHLS(ctx, path, start, session, videoCodec, audioIndex, copyAudio, channels...); err != nil {
 		return "", err
 	}
 	if err := m.waitForGeneratedFile(ctx, key, target); err != nil {
@@ -174,25 +174,25 @@ func (m *Manager) EnsureOriginalHLSSegment(ctx context.Context, path string, sta
 	return target, nil
 }
 
-func audioHLSCacheKey(m *Manager, path string, index int, start float64, copySource bool) string {
+func audioHLSCacheKey(m *Manager, path string, index int, start float64, copySource bool, sourceCodec string) string {
 	mode := "encode"
 	if copySource {
 		mode = "copy"
 	}
-	return m.key(path, hlsAudioCacheVersion, mode, strconv.Itoa(index), seekKey(start))
+	return m.key(path, hlsAudioCacheVersion, mode, sourceCodec, strconv.Itoa(index), seekKey(start))
 }
 
-func (m *Manager) EnsureAudioHLSSegment(ctx context.Context, path string, index int, start float64, session string, copySource bool, name string) (string, error) {
-	key := audioHLSCacheKey(m, path, index, start, copySource)
+func (m *Manager) EnsureAudioHLSSegment(ctx context.Context, path string, index int, start float64, session string, copySource bool, sourceCodec string, channels int, name string) (string, error) {
+	key := audioHLSCacheKey(m, path, index, start, copySource, sourceCodec)
 	target := filepath.Join(m.Cache.Root, key, name)
 	if _, err := os.Stat(target); err == nil {
 		return target, nil
 	}
 	playlist := filepath.Join(m.Cache.Root, key, "index.m3u8")
-	if inspectPlaylist(playlist, ".aac").complete {
+	if inspectPlaylist(playlist, audioHLSSuffix(copySource, sourceCodec)).complete {
 		return "", fmt.Errorf("requested audio segment is absent from a complete playlist: %w", os.ErrNotExist)
 	}
-	if _, err := m.AudioHLS(ctx, path, index, start, session, copySource); err != nil {
+	if _, err := m.AudioHLS(ctx, path, index, start, session, copySource, sourceCodec, channels); err != nil {
 		return "", err
 	}
 	if err := m.waitForGeneratedFile(ctx, key, target); err != nil {

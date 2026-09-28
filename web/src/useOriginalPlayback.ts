@@ -42,13 +42,17 @@ interface OriginalPlaybackOptions {
   armStartupWatchdog: () => void;
   failPlayback: (message: string, details: string) => void;
   onPlaybackLoad: () => void;
+  preferMP3Copy: () => boolean;
+  mp3CopyRejected: () => boolean;
 }
 
 export function useOriginalPlayback(options: OriginalPlaybackOptions) {
   function canDirect() {
     const codec = options.selectedAudioTrack.value?.codec_name?.toLowerCase();
     const audioSupported =
-      !codec || ["aac", "mp3", "opus", "vorbis"].includes(codec);
+      !codec || (["aac", "mp3", "opus", "vorbis"].includes(codec) &&
+        !(codec === "mp3" &&
+          (options.mp3CopyRejected() || options.video.value?.canPlayType("audio/mpeg") === "")));
     return (
       !!options.probe.value?.directPlayCandidate &&
       audioSupported &&
@@ -101,6 +105,7 @@ export function useOriginalPlayback(options: OriginalPlaybackOptions) {
     if (options.audio.value !== undefined) {
       query.set("audio", String(options.audio.value));
     }
+    if (options.preferMP3Copy()) query.set("audioMode", "copy");
     return playbackURL(
       `${options.base}/hls/original/master.m3u8?${query}`,
       options.playbackToken,
@@ -174,6 +179,7 @@ export function useOriginalPlayback(options: OriginalPlaybackOptions) {
       if (options.audio.value !== undefined) {
         query.set("audio", String(options.audio.value));
       }
+      if (options.preferMP3Copy()) query.set("audioMode", "copy");
       element.src = playbackURL(
         `${options.base}/remux.mp4?${query}`,
         options.playbackToken,

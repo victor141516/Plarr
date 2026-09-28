@@ -30,6 +30,9 @@ interface PlaybackViewModelOptions {
   transcodeDiagnosticsError: Ref<string>;
   playbackIssue: Ref<string>;
   reactiveAVSyncReconciliations: Ref<number>;
+  mp3CopyRequested: Ref<boolean>;
+  mp3FallbackUsed: Ref<boolean>;
+  mp3FallbackReason: Ref<string>;
   isAutomatic: () => boolean;
   canDirect: () => boolean;
   canRemux: () => boolean;
@@ -91,6 +94,9 @@ export function usePlaybackViewModel(options: PlaybackViewModelOptions) {
       playbackIssue: options.playbackIssue.value,
       reactiveAVSyncReconciliations:
         options.reactiveAVSyncReconciliations.value,
+      mp3CopyRequested: options.mp3CopyRequested.value,
+      mp3FallbackUsed: options.mp3FallbackUsed.value,
+      mp3FallbackReason: options.mp3FallbackReason.value,
     }),
   );
   const diagnosticCopyText = computed(() =>
