@@ -1,10 +1,29 @@
 <script setup lang="ts">
-import { ArrowLeft, Play } from "@lucide/vue";
+import { onBeforeUnmount, shallowRef } from "vue";
+import { ArrowLeft, Check, Link2, Play } from "@lucide/vue";
 import PlaybackDiagnosticsPanel from "./PlaybackDiagnosticsPanel.vue";
 import PlayerControls from "./PlayerControls.vue";
 import MobileSeekHint from "./MobileSeekHint.vue";
 import VideoGammaFilter from "./VideoGammaFilter.vue";
 import { usePlarrPlayer } from "./usePlarrPlayer";
+import { watchPartyShareURL } from "./watchPartyShareURL";
+
+const shareCopied = shallowRef(false);
+let copyResetTimer: number | undefined;
+async function copyWatchPartyLink() {
+  const link = watchPartyShareURL(location.href);
+  try {
+    await navigator.clipboard.writeText(link);
+    shareCopied.value = true;
+    if (copyResetTimer !== undefined) window.clearTimeout(copyResetTimer);
+    copyResetTimer = window.setTimeout(() => { shareCopied.value = false; }, 2500);
+  } catch {
+    window.prompt("Watch party link", link);
+  }
+}
+onBeforeUnmount(() => {
+  if (copyResetTimer !== undefined) window.clearTimeout(copyResetTimer);
+});
 
 const {
   video,
@@ -86,6 +105,7 @@ const {
   requestCast,
   watchParty,
   watchPartyActive,
+  roomNeedsGesture,
 } = usePlarrPlayer();
 </script>
 
@@ -115,7 +135,7 @@ const {
       :direction="mobileSeekDirection"
       :seconds="mobileSeekSeconds"
     />
-    <div v-if="loading" class="loading">
+    <div v-if="loading && !roomNeedsGesture" class="loading">
       <span />
       <p>Preparing your film…</p>
     </div>
@@ -134,10 +154,20 @@ const {
         {{ watchParty.error.value || `Watch party · ${watchParty.participants.value}` }}
         <template v-if="watchParty.buffering.value"> · Buffering {{ watchParty.buffering.value }}</template>
       </span>
+      <button
+        v-if="watchPartyActive"
+        class="icon-button"
+        :aria-label="shareCopied ? 'Link copied' : 'Copy watch party link'"
+        :title="shareCopied ? 'Link copied' : 'Copy watch party link'"
+        @click="copyWatchPartyLink"
+      >
+        <Check v-if="shareCopied" />
+        <Link2 v-else />
+      </button>
     </header>
 
     <button
-      v-if="!playing && !fatal && !loading"
+      v-if="!playing && !fatal && (!loading || roomNeedsGesture)"
       class="big-play"
       aria-label="Play"
       title="Play"
