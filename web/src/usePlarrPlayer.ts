@@ -113,6 +113,7 @@ export function usePlarrPlayer() {
   let roomIntent = true;
   let roomInitialized = false;
   let roomStart = 0;
+  let roomIsPlaying = false;
   let roomBufferTimer: number | undefined;
   let authorizationExpiredNotified = false;
   let authorizationExpired = (): void => undefined;
@@ -542,6 +543,7 @@ export function usePlarrPlayer() {
   const party = useWatchParty(roomId, playbackToken, (state: PartyState) => {
     roomIntent = state.intent;
     roomStart = state.position;
+    roomIsPlaying = state.playing;
     if (!roomInitialized || !video.value) return;
     const element = video.value;
     if (Math.abs(element.playbackRate - state.rate) > 0.01) setLocalPlaybackRate(state.rate);
@@ -567,7 +569,13 @@ export function usePlarrPlayer() {
   function reportRoomReady(): void {
     if (roomBufferTimer !== undefined) clearTimeout(roomBufferTimer);
     roomBufferTimer = undefined;
-    if (roomId) party.command({ type: "ready" });
+    if (roomId && !roomNeedsGesture.value) party.command({ type: "ready" });
+  }
+
+  function updateAutomaticQuality(): void {
+    // Do not replace the source while the room is still waiting to start.
+    if (roomId && (!playing.value || party.buffering.value > 0)) return;
+    fastABR();
   }
 
   const castPlayback = useCastPlayback({
@@ -743,7 +751,7 @@ export function usePlarrPlayer() {
               bandwidthEstimate.value,
               measured,
             );
-            fastABR();
+            updateAutomaticQuality();
           })
           .catch((error: unknown) => {
             if (!isAbortError(error))
@@ -976,6 +984,7 @@ export function usePlarrPlayer() {
       if (roomNeedsGesture.value && video.value) {
         void video.value.play().then(() => {
           roomNeedsGesture.value = false;
+          if (!roomIsPlaying) video.value?.pause();
           reportRoomReady();
         }).catch(() => undefined);
         return;
@@ -996,7 +1005,7 @@ export function usePlarrPlayer() {
   }
   onMounted(() => {
     void init();
-    abrTimer = window.setInterval(fastABR, 750);
+    abrTimer = window.setInterval(updateAutomaticQuality, 750);
   });
   onBeforeUnmount(() => {
     disposed = true;
@@ -1089,5 +1098,6 @@ export function usePlarrPlayer() {
     requestCast: castPlayback.request,
     watchParty: party,
     watchPartyActive: !!roomId,
+    roomNeedsGesture,
   };
 }
