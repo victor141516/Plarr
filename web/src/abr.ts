@@ -20,10 +20,9 @@ export function chooseAutoLevel(
   failed: Map<number, number>,
 ) {
   if (current < 0 || !levels.length || bandwidth <= 0) return current;
-  // A fresh playback or rendition switch can briefly report high throughput
-  // from a single cached fragment. Wait for a real playback cushion before
-  // committing to a higher, potentially expensive rendition.
-  if (bufferSeconds < 2) return current;
+  // Switching starts a new FFmpeg rendition and retires the old writer. Keep
+  // enough of the old rendition buffered to cover a cold transcode startup.
+  if (bufferSeconds < 6) return current;
   const usable = bandwidth * (bufferSeconds < 4 ? 0.72 : 0.82);
   let affordable = current;
   for (let index = current + 1; index < levels.length; index++) {

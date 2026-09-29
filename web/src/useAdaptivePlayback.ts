@@ -241,6 +241,7 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
           lane: data.id,
           sequence,
           start,
+          duration: Number(data.frag.duration),
         });
         if (divergence && options.onAVSyncReconciliation(divergence)) {
           syncRecoveryRequested = true;

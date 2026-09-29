@@ -13,14 +13,16 @@ const levels = [
 ].map((bitrate) => ({ bitrate }));
 
 describe("fast adaptive upgrades", () => {
-  it("jumps directly to the highest affordable rung", () =>
-    expect(chooseAutoLevel(levels, 0, 100_000_000, 3, new Map())).toBe(6));
+  it("jumps directly to the highest affordable rung once there is transition headroom", () =>
+    expect(chooseAutoLevel(levels, 0, 100_000_000, 6, new Map())).toBe(6));
   it("stops at the highest rung inside the safety budget", () =>
     expect(chooseAutoLevel(levels, 0, 3_000_000, 6, new Map())).toBe(3));
   it("does not upgrade before even one next-level fragment is affordable", () =>
     expect(chooseAutoLevel(levels, 0, 100_000, 1, new Map())).toBe(0));
-  it("does not leap to a high bitrate while there is under two seconds buffered", () =>
-    expect(chooseAutoLevel(levels, 0, 12_000_000, 0.7, new Map())).toBe(0));
+  it("waits for enough old-rendition buffer to cover a cold transcode switch", () => {
+    expect(chooseAutoLevel(levels, 0, 100_000_000, 3, new Map())).toBe(0);
+    expect(chooseAutoLevel(levels, 0, 12_000_000, 0.7, new Map())).toBe(0);
+  });
   it("avoids a level that has failed twice", () =>
     expect(chooseAutoLevel(levels, 1, 100_000_000, 6, new Map([[2, 2]]))).toBe(
       1,

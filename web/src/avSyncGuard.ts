@@ -4,6 +4,7 @@ export type AVFragmentSample = {
   lane: AVFragmentLane;
   sequence: number;
   start: number;
+  duration?: number;
 };
 
 export type AVSyncDivergence = {
@@ -11,17 +12,19 @@ export type AVSyncDivergence = {
   ptsDelta: number;
 };
 
-// Separate adaptive audio and video playlists may have a small, stable PTS
-// offset and may be downloaded at different rates. Only compare equivalent
-// fragments and detect a change from the initial offset; an absolute offset is
-// not evidence of drift. A new guard is created for every HLS generation.
+// Audio and video segment boundaries need not line up even when their media
+// timelines do. Predict each boundary offset from the previous fragments'
+// durations and only treat unexplained, sustained changes as drift.
 export class AVSyncGuard {
   private readonly samples = {
     main: new Map<number, AVFragmentSample>(),
     audio: new Map<number, AVFragmentSample>(),
   };
   private readonly evaluatedSequences = new Set<number>();
-  private baselineOffset: number | undefined;
+  private expectedOffset: number | undefined;
+  private previousSequence: number | undefined;
+  private previousVideoDuration = 0;
+  private previousAudioDuration = 0;
   private consecutiveDivergences = 0;
   private reconciled = false;
 
@@ -52,20 +55,40 @@ export class AVSyncGuard {
       );
     }
 
-    const offset =
-      sample.lane === "main"
-        ? sample.start - matching.start
-        : matching.start - sample.start;
-    if (this.baselineOffset === undefined) {
-      this.baselineOffset = offset;
+    const video = sample.lane === "main" ? sample : matching;
+    const audio = sample.lane === "audio" ? sample : matching;
+    const videoDuration =
+      typeof video.duration === "number" && Number.isFinite(video.duration)
+        ? video.duration
+        : 0;
+    const audioDuration =
+      typeof audio.duration === "number" && Number.isFinite(audio.duration)
+        ? audio.duration
+        : 0;
+    const offset = video.start - audio.start;
+    if (
+      this.expectedOffset === undefined ||
+      this.previousSequence === undefined ||
+      sample.sequence !== this.previousSequence + 1
+    ) {
+      this.expectedOffset = offset;
+      this.previousSequence = sample.sequence;
+      this.previousVideoDuration = videoDuration;
+      this.previousAudioDuration = audioDuration;
+      this.consecutiveDivergences = 0;
       return undefined;
     }
-    const ptsDelta = Math.abs(offset - this.baselineOffset);
+    this.expectedOffset +=
+      this.previousVideoDuration - this.previousAudioDuration;
+    this.previousSequence = sample.sequence;
+    this.previousVideoDuration = videoDuration;
+    this.previousAudioDuration = audioDuration;
+    const ptsDelta = Math.abs(offset - this.expectedOffset);
     const divergent = ptsDelta > 0.75;
 
     if (!divergent) {
       this.consecutiveDivergences = 0;
-      this.baselineOffset = this.baselineOffset * 0.9 + offset * 0.1;
+      this.expectedOffset = this.expectedOffset * 0.9 + offset * 0.1;
       return undefined;
     }
 

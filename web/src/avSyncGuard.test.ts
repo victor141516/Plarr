@@ -32,6 +32,47 @@ describe("AVSyncGuard", () => {
     }
   });
 
+  it("does not treat unequal audio and video segment lengths as A/V drift", () => {
+    const guard = new AVSyncGuard();
+    const videoStarts = [679.553, 681.555, 684.349, 686.351, 688.353];
+    const audioStarts = [679.533, 681.544, 683.549, 685.533, 687.538];
+    const videoDurations = [2.002, 2.794, 2.002, 2.002, 2.002];
+    const audioDurations = [2.011, 2.005, 1.984, 2.005, 2.005];
+    for (let index = 0; index < videoStarts.length; index++) {
+      const sequence = 340 + index;
+      guard.observe({
+        lane: "audio",
+        sequence,
+        start: audioStarts[index]!,
+        duration: audioDurations[index]!,
+      });
+      expect(guard.observe({
+        lane: "main",
+        sequence,
+        start: videoStarts[index]!,
+        duration: videoDurations[index]!,
+      })).toBeUndefined();
+    }
+  });
+
+  it("still detects sustained PTS drift after unequal segment lengths", () => {
+    const guard = new AVSyncGuard();
+    const samples = [
+      { sequence: 10, video: 20, audio: 20, videoDuration: 2.8, audioDuration: 2 },
+      { sequence: 11, video: 22.8, audio: 22, videoDuration: 2, audioDuration: 2 },
+      { sequence: 12, video: 26.2, audio: 24, videoDuration: 2, audioDuration: 2 },
+      { sequence: 13, video: 28.2, audio: 26, videoDuration: 2, audioDuration: 2 },
+      { sequence: 14, video: 30.2, audio: 28, videoDuration: 2, audioDuration: 2 },
+    ];
+    const results = samples.map((s) => {
+      guard.observe({ lane: "audio", sequence: s.sequence, start: s.audio, duration: s.audioDuration });
+      return guard.observe({ lane: "main", sequence: s.sequence, start: s.video, duration: s.videoDuration });
+    });
+    expect(results.slice(0, 4)).toEqual([undefined, undefined, undefined, undefined]);
+    expect(results[4]?.sequenceDelta).toBe(0);
+    expect(results[4]?.ptsDelta).toBeCloseTo(1.4);
+  });
+
   it("detects a persistent change from the established PTS offset once", () => {
     const guard = new AVSyncGuard();
     guard.observe({ lane: "audio", sequence: 10, start: 20 });
