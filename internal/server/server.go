@@ -29,6 +29,7 @@ import (
 	"github.com/victor141516/Plarr/internal/playbackgrant"
 	"github.com/victor141516/Plarr/internal/probe"
 	"github.com/victor141516/Plarr/internal/transcode"
+	"github.com/victor141516/Plarr/internal/watchparty"
 )
 
 type Server struct {
@@ -39,12 +40,16 @@ type Server struct {
 	Cache     *cache.Manager
 	Log       *slog.Logger
 	Grants    *playbackgrant.Manager
+	Parties   *watchparty.Manager
 
 	playbackGenerationMu sync.Mutex
 	playbackGenerations  map[string]uint64
 }
 
 func (s *Server) Handler() http.Handler {
+	if s.Parties == nil {
+		s.Parties = watchparty.New()
+	}
 	if s.Config.APIKey != "" && s.Grants == nil {
 		s.Grants = playbackgrant.New(playbackgrant.Options{})
 	}
@@ -54,6 +59,8 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/api/v1/config", s.clientConfig)
 	r.Get("/api/v1/capabilities", s.capabilities)
 	r.Post("/api/v1/auth/playback-grants", s.createPlaybackGrant)
+	r.Post("/api/v1/watch-parties", s.createWatchParty)
+	r.Get("/api/v1/watch-parties/{room}/connect", s.connectWatchParty)
 	r.Group(func(r chi.Router) {
 		r.Use(s.requirePlaybackGrantForSession)
 		r.Post("/api/v1/playback/sessions/{session}/heartbeat", s.playbackHeartbeat)

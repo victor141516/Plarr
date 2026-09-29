@@ -27,6 +27,8 @@ interface MediaElementEventsOptions {
   clearStartupWatchdog: () => void;
   failPlayback: (message: string, details: string) => void;
   onCodecFailure: (details: string) => boolean;
+  onBuffering?: () => void;
+  onReady?: () => void;
 }
 
 export function useMediaElementEvents(options: MediaElementEventsOptions) {
@@ -44,6 +46,7 @@ export function useMediaElementEvents(options: MediaElementEventsOptions) {
       options.startHeartbeat();
     });
     listen("playing", () => {
+      options.onReady?.();
       options.clearStartupWatchdog();
       options.clearOriginalStall();
       if (options.timeline.pendingAbsolute === undefined) {
@@ -51,11 +54,13 @@ export function useMediaElementEvents(options: MediaElementEventsOptions) {
       }
     });
     listen("waiting", () => {
+      options.onBuffering?.();
       options.loading.value = true;
       options.armStartupWatchdog();
       options.scheduleOriginalFallback();
     });
     listen("canplay", () => {
+      options.onReady?.();
       options.clearStartupWatchdog();
       options.completePendingPosition();
     });

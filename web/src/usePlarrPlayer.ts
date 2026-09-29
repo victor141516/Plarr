@@ -45,6 +45,7 @@ import { useVideoFraming } from "./useVideoFraming";
 import { measureNetworkBandwidth } from "./bandwidthProbe";
 import { AVSyncRecoveryLimiter } from "./avSyncGuard";
 import { useCastPlayback } from "./useCastPlayback";
+import { useWatchParty, type PartyState } from "./useWatchParty";
 import { playbackURL } from "./playbackURL";
 import { playbackNeedsPreviewPriority } from "./previewPlaybackPriority";
 import { shouldRetryMP3WithAAC } from "./mp3Fallback";
@@ -107,6 +108,12 @@ export function usePlarrPlayer() {
   } = parsePlayerLocation(location.hash);
   const trustedParent = shallowRef(false);
   const playbackToken = params.get("playbackToken") || "";
+  const roomId = params.get("room") || "";
+  const roomNeedsGesture = shallowRef(false);
+  let roomIntent = true;
+  let roomInitialized = false;
+  let roomStart = 0;
+  let roomBufferTimer: number | undefined;
   let authorizationExpiredNotified = false;
   let authorizationExpired = (): void => undefined;
   const {
@@ -147,6 +154,11 @@ export function usePlarrPlayer() {
     loadOriginalAt: (target, resume, automatic) =>
       loadOriginalAt(target, resume, automatic),
   });
+  function seekInRoom(position: number): void {
+    const target = Math.max(0, Math.min(duration.value || position, position));
+    seek(target);
+    if (roomId) party.command({ type: "seek", position: target });
+  }
   watch(
     [bufferedSeconds, playing, loading],
     ([buffered, isPlaying, isLoading]) => {
@@ -522,8 +534,41 @@ export function usePlarrPlayer() {
     muted,
     diagnosticCopyText,
     togglePlayback: toggle,
-    seek,
+    seek: seekInRoom,
+    onBoostStart: () => { if (roomId) party.command({ type: "boost-start" }); },
+    onBoostEnd: () => { if (roomId) party.command({ type: "boost-end" }); },
   });
+
+  const party = useWatchParty(roomId, playbackToken, (state: PartyState) => {
+    roomIntent = state.intent;
+    roomStart = state.position;
+    if (!roomInitialized || !video.value) return;
+    const element = video.value;
+    if (Math.abs(element.playbackRate - state.rate) > 0.01) setLocalPlaybackRate(state.rate);
+    // Avoid comparing wall clocks from different devices; the room position is server-authoritative.
+    const target = state.position;
+    if (!loading.value && Math.abs(current.value - target) > 2) seek(target);
+    if (state.playing) {
+      if (element.paused && !loading.value && !roomNeedsGesture.value) {
+        void element.play().catch(() => {
+          roomNeedsGesture.value = true;
+          party.command({ type: "buffering" });
+        });
+      }
+    } else if (!element.paused) element.pause();
+  });
+  function reportRoomBuffering(): void {
+    if (!roomId || roomBufferTimer !== undefined) return;
+    roomBufferTimer = window.setTimeout(() => {
+      roomBufferTimer = undefined;
+      party.command({ type: "buffering" });
+    }, 500);
+  }
+  function reportRoomReady(): void {
+    if (roomBufferTimer !== undefined) clearTimeout(roomBufferTimer);
+    roomBufferTimer = undefined;
+    if (roomId) party.command({ type: "ready" });
+  }
 
   const castPlayback = useCastPlayback({
     mediaBase: base,
@@ -574,12 +619,13 @@ export function usePlarrPlayer() {
       castPlayback.seek(current.value + seconds);
       return;
     }
-    seek(current.value + seconds);
+    seekInRoom(current.value + seconds);
   }
 
   function commitSeekEvent(event: Event): void {
     if (!castPlayback.connected.value) {
       commitLocalSeekEvent(event);
+      if (roomId) party.command({ type: "seek", position: current.value });
       return;
     }
     timeline.scrubbing = false;
@@ -644,6 +690,7 @@ export function usePlarrPlayer() {
       return;
     }
     setLocalPlaybackRate(value);
+    if (roomId) party.command({ type: "rate", rate: value });
   }
   const { attach: attachMediaEvents } = useMediaElementEvents({
     video,
@@ -667,6 +714,8 @@ export function usePlarrPlayer() {
     clearStartupWatchdog,
     failPlayback,
     onCodecFailure,
+    onBuffering: reportRoomBuffering,
+    onReady: reportRoomReady,
   });
 
   async function init() {
@@ -736,6 +785,10 @@ export function usePlarrPlayer() {
       mp3Supported.value = supportsMP3Playback(video.value!);
       mp3MP4Supported.value = supportsMP3InMP4(video.value!);
       attachMediaEvents(video.value!);
+      if (roomId) {
+        await party.connect();
+        roomInitialized = true;
+      }
       setupPlayback();
       emit("ready");
       emit("opened");
@@ -748,7 +801,7 @@ export function usePlarrPlayer() {
     }
   }
   function setupPlayback() {
-    const start = Math.max(0, Number(params.get("start")) || 0);
+    const start = roomId ? roomStart : Math.max(0, Number(params.get("start")) || 0);
     video.value!.volume = volume.value;
     video.value!.muted = muted.value;
     const initial = chooseInitialPlayback({
@@ -760,9 +813,9 @@ export function usePlarrPlayer() {
         "application/vnd.apple.mpegurl",
       ),
     });
-    if (initial === "original") loadOriginalAt(start, true);
-    else if (initial === "hls-js") loadAdaptiveAt(start, true);
-    else if (initial === "native-hls") loadNativeHLSAt(start, true);
+    if (initial === "original") loadOriginalAt(start, !roomId);
+    else if (initial === "hls-js") loadAdaptiveAt(start, !roomId);
+    else if (initial === "native-hls") loadNativeHLSAt(start, !roomId);
     else throw new Error("This browser cannot play this media.");
     applySubtitle();
   }
@@ -919,6 +972,17 @@ export function usePlarrPlayer() {
     loadAdaptiveAt(at, resume, isAutomatic() ? 0 : undefined);
   }
   function toggle() {
+    if (roomId) {
+      if (roomNeedsGesture.value && video.value) {
+        void video.value.play().then(() => {
+          roomNeedsGesture.value = false;
+          reportRoomReady();
+        }).catch(() => undefined);
+        return;
+      }
+      party.command({ type: roomIntent ? "pause" : "play" });
+      return;
+    }
     if (castPlayback.connected.value) {
       castPlayback.toggle();
       return;
@@ -941,6 +1005,7 @@ export function usePlarrPlayer() {
     if (abrTimer) clearInterval(abrTimer);
     if (bandwidthProbeTimer) clearInterval(bandwidthProbeTimer);
     if (originalStallTimer) clearTimeout(originalStallTimer);
+    if (roomBufferTimer !== undefined) clearTimeout(roomBufferTimer);
     destroyHls();
   });
 
@@ -1022,5 +1087,7 @@ export function usePlarrPlayer() {
     castConnected: castPlayback.connected,
     castDeviceName: castPlayback.deviceName,
     requestCast: castPlayback.request,
+    watchParty: party,
+    watchPartyActive: !!roomId,
   };
 }

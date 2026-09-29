@@ -23,6 +23,8 @@ type Options = {
   diagnosticCopyText: ComputedRef<string>;
   togglePlayback: () => void;
   seek: (position: number) => void;
+  onBoostStart?: () => void;
+  onBoostEnd?: () => void;
 };
 
 export function usePlayerInteractions(options: Options) {
@@ -32,7 +34,6 @@ export function usePlayerInteractions(options: Options) {
   let holdTimer: number | undefined;
   let holdSource: "pointer" | "space" | undefined;
   let holdWasPaused = false;
-  let holdPreviousRate = 1;
   let pendingSpace = false;
   let suppressSurfaceClick = false;
   let touchSurfaceClick = false;
@@ -102,8 +103,8 @@ export function usePlayerInteractions(options: Options) {
       const element = options.video.value;
       if (!element) return;
       holdSource = source;
+      options.onBoostStart?.();
       holdWasPaused = element.paused;
-      holdPreviousRate = element.playbackRate || playbackRate.value;
       element.playbackRate = 2;
       if (element.paused) void element.play();
     }, holdDelayMilliseconds);
@@ -111,9 +112,10 @@ export function usePlayerInteractions(options: Options) {
 
   function restoreHold(source: "pointer" | "space"): boolean {
     if (holdSource !== source) return false;
+    options.onBoostEnd?.();
     const element = options.video.value;
     if (element) {
-      element.playbackRate = holdPreviousRate;
+      element.playbackRate = playbackRate.value;
       if (holdWasPaused) element.pause();
     }
     holdSource = undefined;
