@@ -30,6 +30,7 @@ interface AdaptivePlaybackOptions {
   diagnosticMode: Ref<PlaybackMode>;
   activeLevelIndex: Ref<number>;
   bandwidthEstimate: Ref<number>;
+  recentBandwidthProbe: () => number;
   bufferedSeconds: Ref<number>;
   diagnosticsDecision: Ref<string>;
   quality: Ref<string>;
@@ -361,6 +362,7 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
     const element = options.video.value;
     const buffer = options.bufferAhead(element);
     const bandwidth = options.bandwidthEstimate.value;
+    const independentBandwidth = options.recentBandwidthProbe();
     const sourceBitrate = Number(options.probe.value?.format?.bit_rate) || 0;
     const now = Date.now();
     if (buffer < 1) {
@@ -393,9 +395,11 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
         sourceBitrate,
         buffer,
         autoOriginalBlockedUntil,
+        now,
+        independentBandwidth,
       )
     ) {
-      options.diagnosticsDecision.value = `Original selected because ${Math.round(bandwidth / 1_000_000)} Mbps measured bandwidth met the 1.5× source-bitrate margin with ${buffer.toFixed(1)} s buffered. Audio and video are reopening on one unified timeline.`;
+      options.diagnosticsDecision.value = `Original selected because both the ${Math.round(bandwidth / 1_000_000)} Mbps stream estimate and ${Math.round(independentBandwidth / 1_000_000)} Mbps independent probe met the 1.5× source-bitrate margin with ${buffer.toFixed(1)} s buffered. Audio and video are reopening on one unified timeline.`;
       automaticOriginalPending = true;
       options.onAutomaticOriginal(
         options.current.value,

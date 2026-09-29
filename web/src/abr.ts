@@ -80,11 +80,13 @@ export function shouldUseOriginal(
   bufferSeconds: number,
   blockedUntil: number,
   now = Date.now(),
+  independentBandwidth = bandwidth,
 ) {
   return (
     sourceBitrate > 0 &&
     bufferSeconds >= 4 &&
     now >= blockedUntil &&
-    bandwidth >= sourceBitrate * 1.5
+    bandwidth >= sourceBitrate * 1.5 &&
+    independentBandwidth >= sourceBitrate * 1.5
   );
 }

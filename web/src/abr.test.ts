@@ -44,6 +44,18 @@ describe("fast adaptive upgrades", () => {
 });
 
 describe("automatic original quality", () => {
+  it("does not trust a cached-fragment throughput spike over the independent network probe", () =>
+    expect(
+      shouldUseOriginal(200_000_000, 63_000_000, 5, 0, 100, 5_000_000),
+    ).toBe(false));
+  it("allows Original when both independent measurements have ample margin", () =>
+    expect(
+      shouldUseOriginal(150_000_000, 63_000_000, 5, 0, 100, 120_000_000),
+    ).toBe(true));
+  it("requires a recent independent probe before selecting Original automatically", () =>
+    expect(
+      shouldUseOriginal(150_000_000, 63_000_000, 5, 0, 100, 0),
+    ).toBe(false));
   it("uses original when measured bandwidth has a 50% margin", () =>
     expect(shouldUseOriginal(6_000_000, 4_000_000, 5, 0, 100)).toBe(true));
   it("waits for a useful buffer before leaving adaptive HLS", () =>

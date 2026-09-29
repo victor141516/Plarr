@@ -343,6 +343,8 @@ export function usePlarrPlayer() {
     diagnosticMode,
     activeLevelIndex,
     bandwidthEstimate,
+    recentBandwidthProbe: () =>
+      Date.now() < probedBandwidthValidUntil ? probedBandwidth : 0,
     bufferedSeconds,
     diagnosticsDecision,
     quality,
