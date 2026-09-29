@@ -63,6 +63,13 @@ type job struct {
 type sessionLease struct {
 	generation uint64
 	timer      *time.Timer
+	cachePins  map[string]sessionCachePin
+}
+
+type sessionCachePin struct {
+	lane    string
+	order   uint64
+	release func()
 }
 
 func New(ffmpeg string, c *cache.Manager, r []config.Rendition, hw []string, previewCPUPercent float64, log *slog.Logger) *Manager {
@@ -354,6 +361,7 @@ func (m *Manager) HLS(ctx context.Context, path string, r config.Rendition, star
 	}
 	state := inspectPlaylist(target, segmentSuffix)
 	if state.complete {
+		m.pinCompletedHLS(session, "video", key)
 		m.markVideoCacheSelected(session, key)
 		now := time.Now()
 		_ = os.Chtimes(target, now, now)
@@ -409,6 +417,7 @@ func (m *Manager) OriginalHLS(ctx context.Context, path string, start float64, s
 	target := filepath.Join(dir, "index.m3u8")
 	state := inspectPlaylist(target, ".m4s")
 	if state.complete {
+		m.pinCompletedHLS(session, "video", key)
 		now := time.Now()
 		_ = os.Chtimes(target, now, now)
 		return target, nil
@@ -503,6 +512,7 @@ func (m *Manager) AudioHLS(ctx context.Context, path string, index int, start fl
 	target := filepath.Join(dir, "index.m3u8")
 	suffix := audioHLSSuffix(copySource, sourceCodec)
 	if inspectPlaylist(target, suffix).complete {
+		m.pinCompletedHLS(session, "audio", key)
 		return target, nil
 	}
 	if m.expireInterruptedHLSWindow(key, target, suffix) {
@@ -597,9 +607,61 @@ func (m *Manager) CancelSession(session string) {
 	defer m.mu.Unlock()
 	if lease := m.sessionLeases[session]; lease != nil {
 		lease.timer.Stop()
+		lease.releaseCachePins()
 		delete(m.sessionLeases, session)
 	}
 	m.detachSessionLocked(session, "", "")
+}
+
+func (lease *sessionLease) releaseCachePins() {
+	for _, pin := range lease.cachePins {
+		pin.release()
+	}
+	lease.cachePins = nil
+}
+
+// Keep the current and immediately previous HLS windows intact while a viewer
+// uses them. The second window covers seamless quality switches; older seek
+// windows can be reclaimed without pinning the entire playback history.
+func (m *Manager) pinSessionCacheLocked(session, lane, key string) {
+	lease := m.sessionLeases[session]
+	if lease == nil || key == "" {
+		return
+	}
+	if lease.cachePins == nil {
+		lease.cachePins = make(map[string]sessionCachePin)
+	}
+	if _, ok := lease.cachePins[key]; ok {
+		return
+	}
+	m.sessionLeaseSeq++
+	lease.cachePins[key] = sessionCachePin{lane: lane, order: m.sessionLeaseSeq, release: m.Cache.Acquire(key)}
+	var oldestKey string
+	var oldestOrder uint64
+	count := 0
+	for currentKey, pin := range lease.cachePins {
+		if pin.lane != lane {
+			continue
+		}
+		count++
+		if oldestKey == "" || pin.order < oldestOrder {
+			oldestKey, oldestOrder = currentKey, pin.order
+		}
+	}
+	if count > 2 {
+		lease.cachePins[oldestKey].release()
+		delete(lease.cachePins, oldestKey)
+	}
+}
+
+func (m *Manager) pinCompletedHLS(session, lane, key string) {
+	if session == "" {
+		return
+	}
+	m.TouchSession(session)
+	m.mu.Lock()
+	m.pinSessionCacheLocked(session, lane, key)
+	m.mu.Unlock()
 }
 
 // HLS encoders are shared by cache key, not owned by their first viewer.
@@ -649,6 +711,9 @@ func (m *Manager) TouchSession(session string) {
 		timeout = defaultSessionIdle
 	}
 	lease := &sessionLease{generation: generation}
+	if previous := m.sessionLeases[session]; previous != nil {
+		lease.cachePins = previous.cachePins
+	}
 	lease.timer = time.AfterFunc(timeout, func() {
 		m.expireSession(session, generation)
 	})
@@ -663,6 +728,7 @@ func (m *Manager) expireSession(session string, generation uint64) {
 		return
 	}
 	delete(m.sessionLeases, session)
+	lease.releaseCachePins()
 	m.detachSessionLocked(session, "", "")
 }
 
@@ -1018,6 +1084,7 @@ func (m *Manager) stream(ctx context.Context, key, target, segmentSuffix, sessio
 		}
 		if session != "" {
 			j.sessions[session] = struct{}{}
+			m.pinSessionCacheLocked(session, lane, key)
 		}
 		m.mu.Unlock()
 		break
