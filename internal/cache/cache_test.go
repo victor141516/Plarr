@@ -114,6 +114,55 @@ func TestAcquireDoesNotWaitForAnEvictionScan(t *testing.T) {
 	}
 }
 
+func TestEvictionRemovalBlocksOnlyTheEntryBeingRemoved(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "cold.jpg"), []byte("cold"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := New(root, 0)
+	removing := make(chan struct{})
+	continueRemoval := make(chan struct{})
+	m.remove = func(path string) error {
+		close(removing)
+		<-continueRemoval
+		return os.Remove(path)
+	}
+	evictionDone := make(chan error, 1)
+	go func() { evictionDone <- m.Evict() }()
+	<-removing
+
+	unrelatedAcquired := make(chan struct{})
+	go func() {
+		m.Acquire("other")()
+		close(unrelatedAcquired)
+	}()
+	select {
+	case <-unrelatedAcquired:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("removing a cold entry blocked another playback window")
+	}
+
+	coldAcquired := make(chan struct{})
+	go func() {
+		m.Acquire("cold")()
+		close(coldAcquired)
+	}()
+	select {
+	case <-coldAcquired:
+		t.Fatal("a new owner entered an entry while it was being removed")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(continueRemoval)
+	if err := <-evictionDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-coldAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("entry acquisition stayed blocked after eviction finished")
+	}
+}
+
 func TestCacheKeyGroupsStreamFilesAndPreviewTemporaries(t *testing.T) {
 	streamPath := filepath.Join("streamhash", "index.m3u8")
 	for input, want := range map[string]string{

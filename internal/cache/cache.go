@@ -11,12 +11,14 @@ import (
 )
 
 type Manager struct {
-	Root    string
-	Limit   int64
-	mu      sync.Mutex
-	evictMu sync.Mutex
-	active  map[string]int
-	scan    func(string) ([]entry, int64, error)
+	Root     string
+	Limit    int64
+	mu       sync.Mutex
+	evictMu  sync.Mutex
+	active   map[string]int
+	removing map[string]chan struct{}
+	scan     func(string) ([]entry, int64, error)
+	remove   func(string) error
 }
 
 func New(root string, limit int64) *Manager {
@@ -35,9 +37,17 @@ func (m *Manager) ClearStartup() error {
 	return nil
 }
 func (m *Manager) Acquire(key string) func() {
-	m.mu.Lock()
-	m.active[key]++
-	m.mu.Unlock()
+	for {
+		m.mu.Lock()
+		if done := m.removing[key]; done != nil {
+			m.mu.Unlock()
+			<-done
+			continue
+		}
+		m.active[key]++
+		m.mu.Unlock()
+		break
+	}
 	return func() {
 		m.mu.Lock()
 		m.active[key]--
@@ -136,6 +146,10 @@ func (m *Manager) Evict() error {
 		groups = append(groups, g)
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].time.Before(groups[j].time) })
+	remove := m.remove
+	if remove == nil {
+		remove = os.Remove
+	}
 	for _, g := range groups {
 		if total <= m.Limit {
 			return nil
@@ -145,13 +159,22 @@ func (m *Manager) Evict() error {
 			m.mu.Unlock()
 			continue
 		}
+		if m.removing == nil {
+			m.removing = make(map[string]chan struct{})
+		}
+		done := make(chan struct{})
+		m.removing[g.key] = done
+		m.mu.Unlock()
 		for _, e := range g.files {
-			err = os.Remove(e.path)
+			err = remove(e.path)
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				break
 			}
 			total -= e.size
 		}
+		m.mu.Lock()
+		delete(m.removing, g.key)
+		close(done)
 		m.mu.Unlock()
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

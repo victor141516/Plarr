@@ -65,6 +65,13 @@ func TestAACCompatibilityPreservesChannelsAndSampleRate(t *testing.T) {
 	}
 }
 
+func TestSixChannelAACHasStandardLayoutWithoutDownmixing(t *testing.T) {
+	joined := strings.Join(audioHLSArgs("movie.mkv", 2, 0, "cache", "cache/index.m3u8", 0, false, "ac3", 6), " ")
+	if !strings.Contains(joined, "-af aformat=channel_layouts=5.1") || strings.Contains(joined, "-ac 2") {
+		t.Fatalf("six-channel adaptive audio lacks a standard 5.1 layout: %s", joined)
+	}
+}
+
 func TestCopiedMP3UsesTransportStreamSegments(t *testing.T) {
 	args := audioHLSArgs("movie.mkv", 1, 0, "cache", "cache/index.m3u8", 0, true, "mp3", 2)
 	joined := strings.Join(args, " ")

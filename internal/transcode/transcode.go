@@ -25,8 +25,8 @@ import (
 const (
 	hlsSegmentSeconds    = 2
 	hlsVideoCacheVersion = "hls-v13-no-reorder"
-	hlsAudioCacheVersion = "audio-hls-v10-preserve-channels"
-	originalCacheVersion = "original-av-hls-v5-preserve-channels"
+	hlsAudioCacheVersion = "audio-hls-v11-standard-5.1-layout"
+	originalCacheVersion = "original-av-hls-v6-standard-5.1-layout"
 	downloadAudioBitrate = 96_000
 	defaultSessionIdle   = 15 * time.Second
 )
@@ -477,10 +477,9 @@ func originalHLSArgs(path string, start float64, dir, target string, completedSe
 		if copyAudio {
 			args = append(args, "-c:a", "copy")
 		} else {
-			args = append(args, "-c:a", "aac", "-b:a", strconv.Itoa(compatibilityAudioBitrate(firstChannelCount(channels))))
-			if start > 0 {
-				args = append(args, "-af", fmt.Sprintf("volume=enable='lt(t,%.3f)':volume=0", start))
-			}
+			channelCount := firstChannelCount(channels)
+			args = append(args, "-c:a", "aac", "-b:a", strconv.Itoa(compatibilityAudioBitrate(channelCount)))
+			args = appendCompatibilityAudioFilters(args, channelCount, start)
 		}
 	}
 	segmentSeconds := strconv.Itoa(hlsSegmentSeconds)
@@ -556,9 +555,7 @@ func audioHLSArgs(path string, index int, start float64, dir, target string, sta
 		args = append(args, "copy")
 	} else {
 		args = append(args, "aac", "-b:a", strconv.Itoa(compatibilityAudioBitrate(channels)))
-		if start > 0 {
-			args = append(args, "-af", fmt.Sprintf("volume=enable='lt(t,%.3f)':volume=0", start))
-		}
+		args = appendCompatibilityAudioFilters(args, channels, start)
 	}
 	return append(args,
 		"-muxdelay", "0",
@@ -595,6 +592,24 @@ func compatibilityAudioBitrate(channels int) int {
 }
 
 func CompatibilityAudioBitrate(channels int) int { return compatibilityAudioBitrate(channels) }
+
+// AAC with a 5.1(side) layout can be encoded into fragmented MP4 without a
+// recognizable channel layout. Chrome then rejects the init segment even
+// though the stream has six channels. Convert to the standard 5.1 layout
+// without downmixing; preserve the muted keyframe pre-roll when seeking.
+func appendCompatibilityAudioFilters(args []string, channels int, start float64) []string {
+	var filters []string
+	if channels == 6 {
+		filters = append(filters, "aformat=channel_layouts=5.1")
+	}
+	if start > 0 {
+		filters = append(filters, fmt.Sprintf("volume=enable='lt(t,%.3f)':volume=0", start))
+	}
+	if len(filters) == 0 {
+		return args
+	}
+	return append(args, "-af", strings.Join(filters, ","))
+}
 func AudioHLSSuffix(copySource bool, sourceCodec string) string {
 	return audioHLSSuffix(copySource, sourceCodec)
 }
@@ -761,9 +776,11 @@ func streamRemuxArgs(path string, p probe.Result, start float64, audioIndex int,
 	if copyAudio {
 		args = append(args, "-c:a", "copy")
 	} else {
-		if audioNeedsTranscode && start > 0 {
-			args = append(args, "-af", fmt.Sprintf("volume=enable='lt(t,%s)':volume=0", seek))
+		filterStart := 0.0
+		if audioNeedsTranscode {
+			filterStart = start
 		}
+		args = appendCompatibilityAudioFilters(args, audioChannels, filterStart)
 		args = append(args, "-c:a", "aac", "-b:a", strconv.Itoa(compatibilityAudioBitrate(audioChannels)))
 	}
 	args = append(args, "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-frag_duration", "2000000", "-f", "mp4", "pipe:1")
