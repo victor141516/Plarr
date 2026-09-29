@@ -1,4 +1,5 @@
 import Hls from "hls.js";
+import { effectiveAdaptiveBandwidth } from "./abr";
 import { useTelevisionRemote } from "./useTelevisionRemote";
 import {
   computed,
@@ -882,10 +883,7 @@ export function usePlarrPlayer() {
     const measured = getHls()?.bandwidthEstimate || 0;
     const initialProbe =
       Date.now() < probedBandwidthValidUntil ? probedBandwidth : 0;
-    const combined = Math.max(
-      Number.isFinite(measured) && measured > 0 ? measured : 0,
-      initialProbe,
-    );
+    const combined = effectiveAdaptiveBandwidth(measured, initialProbe);
     if (combined > 0) bandwidthEstimate.value = combined;
   }
   function scheduleOriginalFallback() {

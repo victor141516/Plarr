@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chooseAffordableLevel,
   chooseAutoLevel,
+  effectiveAdaptiveBandwidth,
   minimumAutoLevel,
   pinAutoLevel,
   releasePinnedAutoLevel,
@@ -14,6 +15,12 @@ const levels = [
 ].map((bitrate) => ({ bitrate }));
 
 describe("fast adaptive upgrades", () => {
+  it("does not mistake cached HLS fragments for public-link capacity", () => {
+    expect(effectiveAdaptiveBandwidth(260_000_000, 12_000_000)).toBe(12_000_000);
+    expect(effectiveAdaptiveBandwidth(8_000_000, 12_000_000)).toBe(8_000_000);
+    expect(effectiveAdaptiveBandwidth(0, 12_000_000)).toBe(12_000_000);
+    expect(effectiveAdaptiveBandwidth(8_000_000, 0)).toBe(8_000_000);
+  });
   it("starts and stays at a browser-compatible HDR rung", () => {
     const renditions = [240, 360, 480, 720].map((height) => ({ height }));
     expect(minimumAutoLevel(renditions, "hdr")).toBe(2);

@@ -1,5 +1,18 @@
 export type ABRLevel = { bitrate: number };
 
+export function effectiveAdaptiveBandwidth(
+  hlsEstimate: number,
+  independentProbe: number,
+) {
+  const hls = Number.isFinite(hlsEstimate) && hlsEstimate > 0 ? hlsEstimate : 0;
+  const probe = Number.isFinite(independentProbe) && independentProbe > 0
+    ? independentProbe
+    : 0;
+  if (!hls) return probe;
+  if (!probe) return hls;
+  return Math.min(hls, probe);
+}
+
 // Some browser HEVC Main 10 decoders cannot append very small HDR renditions
 // even when the same stream plays at 480p. Keep automatic playback on a
 // decodable floor; SDR retains the full low-bandwidth ladder.

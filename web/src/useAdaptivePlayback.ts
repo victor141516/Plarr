@@ -439,6 +439,12 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
       lowBufferSince = 0;
       return;
     }
+    if (independentBandwidth <= 0) {
+      pinAutoLevel(hls, currentLevel);
+      options.diagnosticsDecision.value =
+        "Automatic quality is waiting for an independent network measurement.";
+      return;
+    }
     const target = chooseAutoLevel(
       scaledLevels,
       currentScaledLevel,
