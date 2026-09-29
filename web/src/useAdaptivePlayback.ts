@@ -2,6 +2,7 @@ import Hls from "hls.js";
 import { onBeforeUnmount, type Ref, type ShallowRef } from "vue";
 import {
   chooseAutoLevel,
+  minimumAutoLevel,
   pinAutoLevel,
   shouldUseOriginal,
 } from "./abr";
@@ -149,7 +150,15 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
       automatic,
       options.manualLevel.value,
     );
-    const initialLevel = requestedAutoLevel ?? pendingManualLevel ?? 0;
+    const initialLevel = automatic
+      ? Math.max(
+          minimumAutoLevel(
+            options.configuredLevels.value,
+            options.getDeliveryColor(),
+          ),
+          requestedAutoLevel ?? 0,
+        )
+      : pendingManualLevel ?? 0;
     destroyHls();
     options.resetElement();
     options.setMode("adaptive");
@@ -410,9 +419,13 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
     }
     const currentScaledLevel = scaledLevelIndices.indexOf(currentLevel);
     if (currentScaledLevel < 0) return;
-    if (sustainedBufferStarvation && currentScaledLevel > 0) {
+    const minimumLevel = minimumAutoLevel(
+      options.availableLevels.value,
+      options.getDeliveryColor(),
+    );
+    if (sustainedBufferStarvation && currentScaledLevel > minimumLevel) {
       const target =
-        scaledLevelIndices[currentScaledLevel - 1] ??
+        scaledLevelIndices[Math.max(minimumLevel, currentScaledLevel - 1)] ??
         scaledLevelIndices[0] ??
         0;
       failedUpgrades.set(

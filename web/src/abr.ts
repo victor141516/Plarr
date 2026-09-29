@@ -1,5 +1,19 @@
 export type ABRLevel = { bitrate: number };
 
+// Some browser HEVC Main 10 decoders cannot append very small HDR renditions
+// even when the same stream plays at 480p. Keep automatic playback on a
+// decodable floor; SDR retains the full low-bandwidth ladder.
+export function minimumAutoLevel(
+  levels: { height: number }[],
+  color: "hdr" | "sdr",
+) {
+  if (color !== "hdr") return 0;
+  if (!levels.some((level) => level.height >= 480)) return 0;
+  // Server configuration is ordered high-to-low; hls.js exposes the same
+  // ladder low-to-high. Count lower rungs rather than using a config index.
+  return levels.filter((level) => level.height < 480).length;
+}
+
 export type AutoLevelTarget = {
   autoLevelCapping: number;
   nextAutoLevel: number;
