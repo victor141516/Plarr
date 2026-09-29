@@ -46,6 +46,7 @@ import { measureNetworkBandwidth } from "./bandwidthProbe";
 import { AVSyncRecoveryLimiter } from "./avSyncGuard";
 import { useCastPlayback } from "./useCastPlayback";
 import { useWatchParty, type PartyState } from "./useWatchParty";
+import { roomCorrection, watchPartyToggleAction } from "./watchPartyClock";
 import { playbackURL } from "./playbackURL";
 import { playbackNeedsPreviewPriority } from "./previewPlaybackPriority";
 import { shouldRetryMP3WithAAC } from "./mp3Fallback";
@@ -114,7 +115,10 @@ export function usePlarrPlayer() {
   let roomInitialized = false;
   let roomStart = 0;
   let roomIsPlaying = false;
+  let roomLastRevision = 0;
   let roomBufferTimer: number | undefined;
+  let roomSyncHoldTimer: number | undefined;
+  let roomReportTimer: number | undefined;
   let authorizationExpiredNotified = false;
   let authorizationExpired = (): void => undefined;
   const {
@@ -545,19 +549,46 @@ export function usePlarrPlayer() {
     roomStart = state.position;
     roomIsPlaying = state.playing;
     if (!roomInitialized || !video.value) return;
+    const forcedSeek = state.action === "seek" && state.revision !== roomLastRevision;
+    roomLastRevision = state.revision;
     const element = video.value;
     if (Math.abs(element.playbackRate - state.rate) > 0.01) setLocalPlaybackRate(state.rate);
-    // Avoid comparing wall clocks from different devices; the room position is server-authoritative.
+    // The room position has already been projected through an RTT-calibrated
+    // server clock. Keep every browser on that timeline after joins and pauses.
     const target = state.position;
-    if (!loading.value && Math.abs(current.value - target) > 2) seek(target);
+    if (forcedSeek && loading.value && Math.abs(current.value - target) > 0.15) {
+      seek(target);
+    } else if (!loading.value) {
+      const correction = roomCorrection(absoluteTime(), target, state.playing);
+      if (correction.type === "seek") {
+        if (roomSyncHoldTimer !== undefined) clearTimeout(roomSyncHoldTimer);
+        roomSyncHoldTimer = undefined;
+        seek(correction.position);
+      } else if (correction.type === "hold" && !element.paused && roomSyncHoldTimer === undefined) {
+        element.pause();
+        roomSyncHoldTimer = window.setTimeout(() => {
+          roomSyncHoldTimer = undefined;
+          if (roomIsPlaying && !roomNeedsGesture.value && !loading.value) {
+            void element.play().catch(() => {
+              roomNeedsGesture.value = true;
+              party.command({ type: "buffering" });
+            });
+          }
+        }, correction.milliseconds);
+      }
+    }
     if (state.playing) {
-      if (element.paused && !loading.value && !roomNeedsGesture.value) {
+      if (element.paused && !loading.value && !roomNeedsGesture.value && roomSyncHoldTimer === undefined) {
         void element.play().catch(() => {
           roomNeedsGesture.value = true;
           party.command({ type: "buffering" });
         });
       }
-    } else if (!element.paused) element.pause();
+    } else {
+      if (roomSyncHoldTimer !== undefined) clearTimeout(roomSyncHoldTimer);
+      roomSyncHoldTimer = undefined;
+      if (!element.paused) element.pause();
+    }
   });
   function reportRoomBuffering(): void {
     if (!roomId || roomBufferTimer !== undefined) return;
@@ -981,7 +1012,8 @@ export function usePlarrPlayer() {
   }
   function toggle() {
     if (roomId) {
-      if (roomNeedsGesture.value && video.value) {
+      const action = watchPartyToggleAction(video.value?.paused ?? true, roomIntent, roomIsPlaying);
+      if (action === "unlock" && video.value) {
         void video.value.play().then(() => {
           roomNeedsGesture.value = false;
           if (!roomIsPlaying) video.value?.pause();
@@ -989,7 +1021,9 @@ export function usePlarrPlayer() {
         }).catch(() => undefined);
         return;
       }
-      party.command({ type: roomIntent ? "pause" : "play" });
+      party.command(action === "pause"
+        ? { type: "pause", position: absoluteTime(), clientTime: performance.now() }
+        : { type: "play" });
       return;
     }
     if (castPlayback.connected.value) {
@@ -1006,6 +1040,13 @@ export function usePlarrPlayer() {
   onMounted(() => {
     void init();
     abrTimer = window.setInterval(updateAutomaticQuality, 750);
+    if (roomId) {
+      roomReportTimer = window.setInterval(() => {
+        if (roomInitialized && !loading.value && video.value?.readyState) {
+          party.command({ type: "report", position: absoluteTime() });
+        }
+      }, 1_000);
+    }
   });
   onBeforeUnmount(() => {
     disposed = true;
@@ -1015,6 +1056,8 @@ export function usePlarrPlayer() {
     if (bandwidthProbeTimer) clearInterval(bandwidthProbeTimer);
     if (originalStallTimer) clearTimeout(originalStallTimer);
     if (roomBufferTimer !== undefined) clearTimeout(roomBufferTimer);
+    if (roomSyncHoldTimer !== undefined) clearTimeout(roomSyncHoldTimer);
+    if (roomReportTimer !== undefined) clearInterval(roomReportTimer);
     destroyHls();
   });
 

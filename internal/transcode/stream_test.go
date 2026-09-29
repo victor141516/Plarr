@@ -179,6 +179,46 @@ func TestCancelSessionStopsEveryPlaybackLane(t *testing.T) {
 	}
 }
 
+func TestSharedHLSJobSurvivesFirstViewerLeaving(t *testing.T) {
+	root := t.TempDir()
+	m := &Manager{Cache: cache.New(root, 1<<30), running: map[string]*job{}}
+	target := filepath.Join(root, "shared", "index.m3u8")
+	canceled := make(chan struct{})
+	started := 0
+	generate := func(ctx context.Context) error {
+		started++
+		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, []byte("#EXTM3U\nsegment-00000.ts\n"), 0o640); err != nil {
+			return err
+		}
+		<-ctx.Done()
+		close(canceled)
+		return ctx.Err()
+	}
+	for _, session := range []string{"viewer-a", "viewer-b"} {
+		if err := m.stream(context.Background(), "shared", target, ".ts", session, "0", "video", generate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if started != 1 {
+		t.Fatalf("started %d encoders, want one shared encoder", started)
+	}
+	m.CancelSession("viewer-a")
+	select {
+	case <-canceled:
+		t.Fatal("first viewer canceled the second viewer's shared encoder")
+	case <-time.After(50 * time.Millisecond):
+	}
+	m.CancelSession("viewer-b")
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("shared encoder kept running after the final viewer left")
+	}
+}
+
 func TestExpiredSessionLeaseCancelsItsBackgroundJobs(t *testing.T) {
 	root := t.TempDir()
 	m := &Manager{

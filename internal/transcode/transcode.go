@@ -54,6 +54,8 @@ type job struct {
 	err       error
 	cancel    context.CancelFunc
 	session   string
+	sessions  map[string]struct{}
+	canceling bool
 	seekToken string
 	lane      string
 }
@@ -597,8 +599,27 @@ func (m *Manager) CancelSession(session string) {
 		lease.timer.Stop()
 		delete(m.sessionLeases, session)
 	}
-	for _, active := range m.running {
-		if active.session == session && active.cancel != nil {
+	m.detachSessionLocked(session, "", "")
+}
+
+// HLS encoders are shared by cache key, not owned by their first viewer.
+func (m *Manager) detachSessionLocked(session, lane, keepKey string) {
+	for key, active := range m.running {
+		if (lane != "" && active.lane != lane) || key == keepKey {
+			continue
+		}
+		if active.lane == "preview" {
+			if active.session == session && active.cancel != nil {
+				active.cancel()
+			}
+			continue
+		}
+		if _, subscribed := active.sessions[session]; !subscribed {
+			continue
+		}
+		delete(active.sessions, session)
+		if len(active.sessions) == 0 && active.cancel != nil {
+			active.canceling = true
 			active.cancel()
 		}
 	}
@@ -642,11 +663,7 @@ func (m *Manager) expireSession(session string, generation uint64) {
 		return
 	}
 	delete(m.sessionLeases, session)
-	for _, active := range m.running {
-		if active.session == session && active.cancel != nil {
-			active.cancel()
-		}
-	}
+	m.detachSessionLocked(session, "", "")
 }
 
 // StreamRemux keeps the source video bit-for-bit and changes only its
@@ -960,33 +977,51 @@ func (m *Manager) single(ctx context.Context, key string, fn func() error) error
 // background so playback can start without waiting for the entire movie.
 func (m *Manager) stream(ctx context.Context, key, target, segmentSuffix, session, seekToken, lane string, fn func(context.Context) error) error {
 	m.TouchSession(session)
-	m.mu.Lock()
-	j, ok := m.running[key]
-	if !ok {
+	var j *job
+	for {
+		m.mu.Lock()
 		if session != "" {
-			for activeKey, active := range m.running {
-				if active.session == session && active.lane == lane && activeKey != key && active.cancel != nil {
-					active.cancel()
-				}
-			}
+			m.detachSessionLocked(session, lane, key)
 		}
-		jobCtx, cancel := context.WithCancel(context.Background())
-		j = &job{done: make(chan struct{}), cancel: cancel, session: session, seekToken: seekToken, lane: lane}
-		m.running[key] = j
-		go func() {
-			release := m.Cache.Acquire(key)
-			defer release()
-			defer cancel()
-			j.err = fn(jobCtx)
-			close(j.done)
-			m.mu.Lock()
-			if m.running[key] == j {
-				delete(m.running, key)
-			}
+		j = m.running[key]
+		if j != nil && j.canceling {
 			m.mu.Unlock()
-		}()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-j.done:
+			}
+			// The last viewer left while a playlist was incomplete. A new viewer
+			// must start a fresh window only after the old writer has exited.
+			m.expireInterruptedHLSWindow(key, target, segmentSuffix)
+			if inspectPlaylist(target, segmentSuffix).complete {
+				return nil
+			}
+			continue
+		}
+		if j == nil {
+			jobCtx, cancel := context.WithCancel(context.Background())
+			j = &job{done: make(chan struct{}), cancel: cancel, session: session, sessions: make(map[string]struct{}), seekToken: seekToken, lane: lane}
+			m.running[key] = j
+			go func() {
+				release := m.Cache.Acquire(key)
+				defer release()
+				defer cancel()
+				j.err = fn(jobCtx)
+				m.mu.Lock()
+				if m.running[key] == j {
+					delete(m.running, key)
+				}
+				m.mu.Unlock()
+				close(j.done)
+			}()
+		}
+		if session != "" {
+			j.sessions[session] = struct{}{}
+		}
+		m.mu.Unlock()
+		break
 	}
-	m.mu.Unlock()
 
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()

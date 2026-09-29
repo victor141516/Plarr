@@ -56,6 +56,34 @@ describe("useMediaElementEvents", () => {
     expect(clearStartupWatchdog).toHaveBeenCalledOnce();
   });
 
+  it("clears a stale loading state when a ready video pauses", () => {
+    const element = document.createElement("video");
+    Object.defineProperty(element, "readyState", { configurable: true, value: 4 });
+    const loading = shallowRef(false);
+    render(defineComponent({
+      setup() {
+        const { attach } = useMediaElementEvents({
+          video: shallowRef(element), playing: shallowRef(true), loading,
+          current: shallowRef(0), duration: shallowRef(120),
+          timeline: reactive({ pendingAbsolute: undefined as number | undefined, scrubbing: false }),
+          getMode: () => "adaptive", absoluteTime: () => 0,
+          completePendingPosition: vi.fn(), updateBufferedRanges: vi.fn(),
+          applyNativeTracks: vi.fn(), syncVolumeFromElement: vi.fn(),
+          scheduleOriginalFallback: vi.fn(), clearOriginalStall: vi.fn(),
+          emit: vi.fn(), startHeartbeat: vi.fn(), stopHeartbeat: vi.fn(),
+          armStartupWatchdog: vi.fn(), clearStartupWatchdog: vi.fn(),
+          failPlayback: vi.fn(), onCodecFailure: vi.fn(() => false),
+        });
+        attach(element);
+        return () => null;
+      },
+    }));
+    element.dispatchEvent(new Event("waiting"));
+    expect(loading.value).toBe(true);
+    element.dispatchEvent(new Event("pause"));
+    expect(loading.value).toBe(false);
+  });
+
   it("lets a decoder error retry MP3 before showing a fatal media error", () => {
     const element = document.createElement("video");
     Object.defineProperty(element, "error", {

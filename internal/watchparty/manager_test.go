@@ -56,6 +56,10 @@ func TestRoomSynchronizesPlaybackAndBuffering(t *testing.T) {
 		t.Fatalf("buffering advanced position = %v", state.Position)
 	}
 	sendA(Event{Type: "seek", Position: 60})
+	state = latest(b)
+	if state.Action != "seek" || state.Position != 60 {
+		t.Fatalf("seek action was not published: %+v", state)
+	}
 	sendA(Event{Type: "rate", Rate: 1.5})
 	sendB(Event{Type: "ready"})
 	state = latest(b)
@@ -97,6 +101,31 @@ func TestEmptyRoomExpires(t *testing.T) {
 	now = now.Add(time.Hour + time.Second)
 	if _, err := manager.Media(id); err != ErrNotFound {
 		t.Fatalf("expected expired room, got %v", err)
+	}
+}
+
+func TestPauseUsesInitiatingViewerPositionAndTracksObservedSkew(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	m := New()
+	m.now = func() time.Time { return now }
+	id, _ := m.Create("file")
+	_, _, leaveA, sendA, _ := m.Join(id)
+	defer leaveA()
+	_, _, leaveB, sendB, _ := m.Join(id)
+	defer leaveB()
+	sendA(Event{Type: "ready"})
+	sendB(Event{Type: "ready"})
+	now = now.Add(10 * time.Second)
+	sendA(Event{Type: "report", Position: 9.4})
+	sendB(Event{Type: "report", Position: 10})
+	state, _ := m.Snapshot(id)
+	if state.ObservedSkew < 0.59 || state.ObservedSkew > 0.61 {
+		t.Fatalf("observed skew = %v, want 0.6", state.ObservedSkew)
+	}
+	sendA(Event{Type: "pause", Position: 9.4, ClientTime: 123})
+	state, _ = m.Snapshot(id)
+	if state.Playing || state.Position != 9.4 {
+		t.Fatalf("pause did not align to initiating viewer: %+v", state)
 	}
 }
 

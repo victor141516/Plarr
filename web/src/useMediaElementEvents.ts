@@ -63,6 +63,9 @@ export function useMediaElementEvents(options: MediaElementEventsOptions) {
       options.onReady?.();
       options.clearStartupWatchdog();
       options.completePendingPosition();
+      if (options.timeline.pendingAbsolute === undefined && element.readyState >= 3) {
+        options.loading.value = false;
+      }
     });
     listen("loadedmetadata", () => {
       if (options.getMode() === "original-direct") options.applyNativeTracks();
@@ -74,6 +77,9 @@ export function useMediaElementEvents(options: MediaElementEventsOptions) {
     });
     listen("pause", () => {
       options.clearStartupWatchdog();
+      if (options.timeline.pendingAbsolute === undefined && element.readyState >= 3) {
+        options.loading.value = false;
+      }
       options.playing.value = false;
       options.emit("pause");
       options.stopHeartbeat();

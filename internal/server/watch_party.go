@@ -95,11 +95,22 @@ func (s *Server) connectWatchParty(w http.ResponseWriter, r *http.Request) {
 	defer leave()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	type clockPong struct {
+		Type       string  `json:"type"`
+		ClientTime float64 `json:"clientTime"`
+		ServerTime int64   `json:"serverTime"`
+	}
+	pongs := make(chan clockPong, 8)
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
+			case pong := <-pongs:
+				if wsjson.Write(ctx, conn, pong) != nil {
+					cancel()
+					return
+				}
 			case state, ok := <-updates:
 				if !ok {
 					cancel()
@@ -124,6 +135,13 @@ func (s *Server) connectWatchParty(w http.ResponseWriter, r *http.Request) {
 		var event watchparty.Event
 		if wsjson.Read(ctx, conn, &event) != nil {
 			return
+		}
+		if event.Type == "ping" {
+			select {
+			case pongs <- clockPong{Type: "pong", ClientTime: event.ClientTime, ServerTime: time.Now().UnixMilli()}:
+			default:
+			}
+			continue
 		}
 		action(event)
 	}
