@@ -99,3 +99,34 @@ func TestEmptyRoomExpires(t *testing.T) {
 		t.Fatalf("expected expired room, got %v", err)
 	}
 }
+
+func TestRoomClockStopsWithoutViewers(t *testing.T) {
+	now := time.Now()
+	manager := New()
+	manager.now = func() time.Time { return now }
+	id, err := manager.Create("file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(15 * time.Minute)
+	state, err := manager.Snapshot(id)
+	if err != nil || state.Position != 0 {
+		t.Fatalf("empty room advanced: %+v %v", state, err)
+	}
+	_, _, leave, send, err := manager.Join(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(Event{Type: "ready"})
+	now = now.Add(5 * time.Second)
+	state, _ = manager.Snapshot(id)
+	if state.Position != 5 {
+		t.Fatalf("active room position = %v", state.Position)
+	}
+	leave()
+	now = now.Add(15 * time.Minute)
+	state, _ = manager.Snapshot(id)
+	if state.Position != 5 {
+		t.Fatalf("empty room kept advancing: %v", state.Position)
+	}
+}
