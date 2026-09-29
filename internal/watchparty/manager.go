@@ -144,6 +144,9 @@ func (m *Manager) Join(id string) (string, <-chan State, func(), func(Event), er
 }
 
 func (r *room) effective() bool {
+	if len(r.peers) == 0 {
+		return false
+	}
 	active := r.playing
 	for p := range r.peers {
 		if p.boosting {
