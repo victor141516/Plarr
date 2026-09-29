@@ -19,6 +19,8 @@ describe("fast adaptive upgrades", () => {
     expect(chooseAutoLevel(levels, 0, 3_000_000, 6, new Map())).toBe(3));
   it("does not upgrade before even one next-level fragment is affordable", () =>
     expect(chooseAutoLevel(levels, 0, 100_000, 1, new Map())).toBe(0));
+  it("does not leap to a high bitrate while there is under two seconds buffered", () =>
+    expect(chooseAutoLevel(levels, 0, 12_000_000, 0.7, new Map())).toBe(0));
   it("avoids a level that has failed twice", () =>
     expect(chooseAutoLevel(levels, 1, 100_000_000, 6, new Map([[2, 2]]))).toBe(
       1,

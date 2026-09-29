@@ -20,6 +20,10 @@ export function chooseAutoLevel(
   failed: Map<number, number>,
 ) {
   if (current < 0 || !levels.length || bandwidth <= 0) return current;
+  // A fresh playback or rendition switch can briefly report high throughput
+  // from a single cached fragment. Wait for a real playback cushion before
+  // committing to a higher, potentially expensive rendition.
+  if (bufferSeconds < 2) return current;
   const usable = bandwidth * (bufferSeconds < 4 ? 0.72 : 0.82);
   let affordable = current;
   for (let index = current + 1; index < levels.length; index++) {
@@ -28,8 +32,6 @@ export function chooseAutoLevel(
     else break;
   }
   if (affordable <= current) return current;
-  if (bufferSeconds < 2 && levels[current + 1]!.bitrate * 1.5 > bandwidth)
-    return current;
   return affordable;
 }
 
