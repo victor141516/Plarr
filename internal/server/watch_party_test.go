@@ -63,6 +63,25 @@ func TestWatchPartyShareLinkAndSocketSynchronizeGuests(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close(websocket.StatusNormalClosure, "")
+	if err = wsjson.Write(ctx, first, watchparty.Event{Type: "ping", ClientTime: 42}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var packet struct {
+			Type       string  `json:"type"`
+			ClientTime float64 `json:"clientTime"`
+			ServerTime int64   `json:"serverTime"`
+		}
+		if err = wsjson.Read(ctx, first, &packet); err != nil {
+			t.Fatal(err)
+		}
+		if packet.Type == "pong" {
+			if packet.ClientTime != 42 || packet.ServerTime == 0 {
+				t.Fatalf("invalid clock response: %+v", packet)
+			}
+			break
+		}
+	}
 	if err = wsjson.Write(ctx, first, watchparty.Event{Type: "ready"}); err != nil {
 		t.Fatal(err)
 	}

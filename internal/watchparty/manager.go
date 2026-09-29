@@ -12,9 +12,10 @@ import (
 var ErrNotFound = errors.New("watch party not found")
 
 type Event struct {
-	Type     string  `json:"type"`
-	Position float64 `json:"position"`
-	Rate     float64 `json:"rate"`
+	Type       string  `json:"type"`
+	Position   float64 `json:"position"`
+	Rate       float64 `json:"rate"`
+	ClientTime float64 `json:"clientTime"`
 }
 
 type State struct {
@@ -27,12 +28,16 @@ type State struct {
 	Buffering    int     `json:"buffering"`
 	Revision     uint64  `json:"revision"`
 	ServerTime   int64   `json:"serverTime"`
+	ObservedSkew float64 `json:"observedSkew"`
+	Action       string  `json:"action,omitempty"`
 }
 
 type participant struct {
 	send      chan State
 	buffering bool
 	boosting  bool
+	position  float64
+	reported  time.Time
 }
 type room struct {
 	media    string
@@ -41,6 +46,7 @@ type room struct {
 	playing  bool
 	updated  time.Time
 	revision uint64
+	action   string
 	peers    map[*participant]struct{}
 	emptyAt  time.Time
 }
@@ -89,7 +95,8 @@ func (m *Manager) Snapshot(id string) (State, error) {
 			buffers++
 		}
 	}
-	return State{Type: "state", Position: r.position, Playing: r.effective(), Intent: r.playing, Rate: r.speed(), Participants: len(r.peers), Buffering: buffers, Revision: r.revision, ServerTime: m.now().UnixMilli()}, nil
+	now := m.now()
+	return State{Type: "state", Position: r.position, Playing: r.effective(), Intent: r.playing, Rate: r.speed(), Participants: len(r.peers), Buffering: buffers, Revision: r.revision, ServerTime: now.UnixMilli(), ObservedSkew: r.observedSkew(now), Action: r.action}, nil
 }
 
 func (m *Manager) cleanup() {
@@ -112,6 +119,7 @@ func (m *Manager) Join(id string) (string, <-chan State, func(), func(Event), er
 	r.advance(m.now())
 	r.peers[p] = struct{}{}
 	r.revision++
+	r.action = "join"
 	r.publish(m.now())
 	leave := func() {
 		m.mu.Lock()
@@ -123,6 +131,7 @@ func (m *Manager) Join(id string) (string, <-chan State, func(), func(Event), er
 		delete(r.peers, p)
 		close(p.send)
 		r.revision++
+		r.action = "leave"
 		if len(r.peers) == 0 {
 			r.emptyAt = m.now()
 		}
@@ -135,8 +144,9 @@ func (m *Manager) Join(id string) (string, <-chan State, func(), func(Event), er
 			return
 		}
 		r.advance(m.now())
-		if r.apply(p, e) {
+		if r.apply(p, e, m.now()) {
 			r.revision++
+			r.action = e.Type
 			r.publish(m.now())
 		}
 	}
@@ -177,11 +187,16 @@ func (r *room) advance(now time.Time) {
 	}
 	r.updated = now
 }
-func (r *room) apply(p *participant, e Event) bool {
+func (r *room) apply(p *participant, e Event, now time.Time) bool {
 	switch e.Type {
 	case "play":
 		r.playing = true
 	case "pause":
+		// The initiating browser knows its actual media position more precisely
+		// than the room clock, especially while a command is in flight.
+		if e.ClientTime > 0 && finite(e.Position) && e.Position >= 0 && math.Abs(e.Position-r.position) <= 5 {
+			r.position = e.Position
+		}
 		r.playing = false
 	case "seek":
 		if !finite(e.Position) || e.Position < 0 {
@@ -201,12 +216,35 @@ func (r *room) apply(p *participant, e Event) bool {
 		p.buffering = true
 	case "ready":
 		p.buffering = false
+	case "report":
+		if !finite(e.Position) || e.Position < 0 {
+			return false
+		}
+		p.position = e.Position
+		p.reported = now
+		return false
 	default:
 		return false
 	}
 	return true
 }
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+
+func (r *room) observedSkew(now time.Time) float64 {
+	var maxSkew float64
+	for p := range r.peers {
+		if p.reported.IsZero() || p.buffering || now.Sub(p.reported) > 4*time.Second {
+			continue
+		}
+		position := p.position
+		if r.effective() {
+			position += now.Sub(p.reported).Seconds() * r.speed()
+		}
+		maxSkew = math.Max(maxSkew, math.Abs(position-r.position))
+	}
+	return maxSkew
+}
+
 func (r *room) publish(now time.Time) {
 	buffers := 0
 	for p := range r.peers {
@@ -214,7 +252,7 @@ func (r *room) publish(now time.Time) {
 			buffers++
 		}
 	}
-	state := State{Type: "state", Position: r.position, Playing: r.effective(), Intent: r.playing, Rate: r.speed(), Participants: len(r.peers), Buffering: buffers, Revision: r.revision, ServerTime: now.UnixMilli()}
+	state := State{Type: "state", Position: r.position, Playing: r.effective(), Intent: r.playing, Rate: r.speed(), Participants: len(r.peers), Buffering: buffers, Revision: r.revision, ServerTime: now.UnixMilli(), ObservedSkew: r.observedSkew(now), Action: r.action}
 	for p := range r.peers {
 		select {
 		case p.send <- state:
