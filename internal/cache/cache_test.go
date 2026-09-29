@@ -57,6 +57,33 @@ func TestEvictionKeepsEveryFileOwnedByAnActiveStream(t *testing.T) {
 	}
 }
 
+func TestEvictionNeverLeavesAnHLSPlaylistWithoutItsInitSegment(t *testing.T) {
+	root := t.TempDir()
+	stream := filepath.Join(root, "movie")
+	if err := os.Mkdir(stream, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, size := range map[string]int{"init.mp4": 2, "index.m3u8": 2, "segment-00000.m4s": 20} {
+		if err := os.WriteFile(filepath.Join(stream, name), make([]byte, size), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The init segment is normally the oldest file. File-by-file eviction
+	// previously removed it while retaining a playlist that still referred to it.
+	if err := os.Chtimes(filepath.Join(stream, "init.mp4"), time.Now().Add(-time.Hour), time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	m := New(root, 21)
+	if err := m.Evict(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"init.mp4", "index.m3u8", "segment-00000.m4s"} {
+		if _, err := os.Stat(filepath.Join(stream, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s remains in a partially evicted HLS stream: %v", name, err)
+		}
+	}
+}
+
 func TestAcquireDoesNotWaitForAnEvictionScan(t *testing.T) {
 	m := New(t.TempDir(), 0)
 	scanStarted := make(chan struct{})

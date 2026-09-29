@@ -219,6 +219,77 @@ func TestSharedHLSJobSurvivesFirstViewerLeaving(t *testing.T) {
 	}
 }
 
+func TestCompletedHLSWindowStaysCachedWhileViewerIsActive(t *testing.T) {
+	root := t.TempDir()
+	m := &Manager{Cache: cache.New(root, 0), running: map[string]*job{}, sessionLeases: map[string]*sessionLease{}}
+	target := filepath.Join(root, "movie", "index.m3u8")
+	if err := m.stream(context.Background(), "movie", target, ".m4s", "viewer", "0", "video", func(context.Context) error {
+		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(filepath.Dir(target), "init.mp4"), []byte("init"), 0o640); err != nil {
+			return err
+		}
+		return os.WriteFile(target, []byte("#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2,\nsegment-00000.m4s\n"), 0o640)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-func() <-chan struct{} {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if j := m.running["movie"]; j != nil {
+			return j.done
+		}
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}():
+	case <-time.After(time.Second):
+		t.Fatal("HLS writer did not finish")
+	}
+	if err := m.Cache.Evict(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "movie", "init.mp4")); err != nil {
+		t.Fatalf("active viewer lost its completed HLS window: %v", err)
+	}
+	m.CancelSession("viewer")
+	if err := m.Cache.Evict(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "movie", "init.mp4")); !os.IsNotExist(err) {
+		t.Fatalf("closed viewer kept the HLS window pinned: %v", err)
+	}
+}
+
+func TestCachedOriginalHLSWindowIsPinnedForNewViewer(t *testing.T) {
+	root := t.TempDir()
+	m := &Manager{Cache: cache.New(root, 0), running: map[string]*job{}, sessionLeases: map[string]*sessionLease{}}
+	key := originalHLSCacheKey(m, "movie.mkv", 0, "h264", -1, false)
+	dir := filepath.Join(root, key)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	initPath := filepath.Join(dir, "init.mp4")
+	if err := os.WriteFile(initPath, []byte("init"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.m3u8"), []byte("#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2,\nsegment-00000.m4s\n#EXT-X-ENDLIST\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.OriginalHLS(context.Background(), "movie.mkv", 0, "new-viewer", "h264", -1, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Cache.Evict(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(initPath); err != nil {
+		t.Fatalf("the reused original HLS window was evicted while watched: %v", err)
+	}
+	m.CancelSession("new-viewer")
+}
+
 func TestExpiredSessionLeaseCancelsItsBackgroundJobs(t *testing.T) {
 	root := t.TempDir()
 	m := &Manager{
