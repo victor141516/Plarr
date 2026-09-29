@@ -64,3 +64,12 @@ func TestStreamRemuxDoesNotAddSeekFlagsAtTheBeginning(t *testing.T) {
 		t.Fatalf("zero-start remux received unnecessary seek flags: %v", args)
 	}
 }
+
+func TestStreamRemuxNormalizesSixChannelAACLayout(t *testing.T) {
+	p := remuxProbe("ac3")
+	p.Audio[0].Channels = 6
+	joined := strings.Join(streamRemuxArgs("movie.mkv", p, 0, 1), " ")
+	if !strings.Contains(joined, "-af aformat=channel_layouts=5.1") || strings.Contains(joined, "-ac 2") {
+		t.Fatalf("six-channel remux did not preserve a playable 5.1 layout: %s", joined)
+	}
+}

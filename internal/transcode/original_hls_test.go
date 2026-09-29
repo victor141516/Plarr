@@ -70,6 +70,9 @@ func TestOriginalHLSCompatibilityPreservesSixChannels(t *testing.T) {
 	if !strings.Contains(joined, "-c:a aac -b:a 320000") || strings.Contains(joined, "-ac ") || strings.Contains(joined, "-ar ") {
 		t.Fatalf("original audio compatibility path altered the source channel layout or sample rate: %s", joined)
 	}
+	if !strings.Contains(joined, "-af aformat=channel_layouts=5.1") {
+		t.Fatalf("six-channel AAC in fragmented MP4 needs an explicit browser-compatible 5.1 layout: %s", joined)
+	}
 }
 
 func TestOriginalHLSKeepsAndMutesCompatibilityAudioPreroll(t *testing.T) {
