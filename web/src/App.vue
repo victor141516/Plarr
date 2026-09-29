@@ -84,6 +84,8 @@ const {
   castConnected,
   castDeviceName,
   requestCast,
+  watchParty,
+  watchPartyActive,
 } = usePlarrPlayer();
 </script>
 
@@ -104,7 +106,7 @@ const {
         <video
           ref="video"
           :style="videoContentStyle"
-          autoplay
+          :autoplay="!watchPartyActive"
           playsinline
         />
       </div>
@@ -128,6 +130,10 @@ const {
         <ArrowLeft />
       </button>
       <b>{{ displayTitle }}</b>
+      <span v-if="watchPartyActive" class="watch-party-status" role="status">
+        {{ watchParty.error.value || `Watch party · ${watchParty.participants.value}` }}
+        <template v-if="watchParty.buffering.value"> · Buffering {{ watchParty.buffering.value }}</template>
+      </span>
     </header>
 
     <button
@@ -181,7 +187,7 @@ const {
       :video-appearance-adjusted="videoAppearanceAdjusted"
       :has-previous="hasPrevious"
       :has-next="hasNext"
-      :cast-available="castAvailable"
+      :cast-available="castAvailable && !watchPartyActive"
       :cast-connected="castConnected"
       :cast-device-name="castDeviceName"
       @preview-seek="previewSeekEvent"

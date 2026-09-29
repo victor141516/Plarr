@@ -120,11 +120,24 @@ header {
   transition: opacity 0.25s;
 }
 header b {
+  min-width: 0;
   overflow: hidden;
   font-size: 1.05rem;
   text-overflow: ellipsis;
   text-shadow: 0 1px 3px #000, 0 0 14px #000;
   white-space: nowrap;
+}
+.watch-party-status {
+  margin-left: auto;
+  max-width: 38vw;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.45rem;
+  background: #0009;
+  color: #fff;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 header .icon-button {
   background: #0008;
