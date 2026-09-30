@@ -84,6 +84,68 @@ describe("useMediaElementEvents", () => {
     expect(loading.value).toBe(false);
   });
 
+  it("keeps the requested absolute position while an HLS seek is preparing", () => {
+    const element = document.createElement("video");
+    const current = shallowRef(8400);
+    const timeline = reactive({ pendingAbsolute: 8400 as number | undefined, scrubbing: false });
+    const absoluteTime = vi.fn(() => 8395);
+    render(defineComponent({
+      setup() {
+        const { attach } = useMediaElementEvents({
+          video: shallowRef(element), playing: shallowRef(true), loading: shallowRef(true),
+          current, duration: shallowRef(10000), timeline,
+          getMode: () => "adaptive", absoluteTime,
+          completePendingPosition: vi.fn(), updateBufferedRanges: vi.fn(),
+          applyNativeTracks: vi.fn(), syncVolumeFromElement: vi.fn(),
+          scheduleOriginalFallback: vi.fn(), clearOriginalStall: vi.fn(),
+          emit: vi.fn(), startHeartbeat: vi.fn(), stopHeartbeat: vi.fn(),
+          armStartupWatchdog: vi.fn(), clearStartupWatchdog: vi.fn(),
+          failPlayback: vi.fn(), onCodecFailure: vi.fn(() => false),
+        });
+        attach(element);
+        return () => null;
+      },
+    }));
+    element.dispatchEvent(new Event("timeupdate"));
+    expect(current.value).toBe(8400);
+    expect(absoluteTime).not.toHaveBeenCalled();
+    timeline.pendingAbsolute = undefined;
+    element.dispatchEvent(new Event("timeupdate"));
+    expect(current.value).toBe(8395);
+  });
+
+  it("keeps the startup watchdog armed for preroll that precedes the requested position", () => {
+    const element = document.createElement("video");
+    Object.defineProperty(element, "readyState", { configurable: true, value: 4 });
+    const timeline = reactive({ pendingAbsolute: 5000 as number | undefined, scrubbing: false });
+    const clearStartupWatchdog = vi.fn();
+    render(defineComponent({
+      setup() {
+        const { attach } = useMediaElementEvents({
+          video: shallowRef(element), playing: shallowRef(false), loading: shallowRef(true),
+          current: shallowRef(5000), duration: shallowRef(10000), timeline,
+          getMode: () => "adaptive", absoluteTime: () => 4994,
+          completePendingPosition: vi.fn(), updateBufferedRanges: vi.fn(),
+          applyNativeTracks: vi.fn(), syncVolumeFromElement: vi.fn(),
+          scheduleOriginalFallback: vi.fn(), clearOriginalStall: vi.fn(),
+          emit: vi.fn(), startHeartbeat: vi.fn(), stopHeartbeat: vi.fn(),
+          armStartupWatchdog: vi.fn(), clearStartupWatchdog,
+          failPlayback: vi.fn(), onCodecFailure: vi.fn(() => false),
+        });
+        attach(element);
+        return () => null;
+      },
+    }));
+
+    element.dispatchEvent(new Event("canplay"));
+    element.dispatchEvent(new Event("playing"));
+    expect(clearStartupWatchdog).not.toHaveBeenCalled();
+
+    timeline.pendingAbsolute = undefined;
+    element.dispatchEvent(new Event("canplay"));
+    expect(clearStartupWatchdog).toHaveBeenCalledOnce();
+  });
+
   it("lets a decoder error retry MP3 before showing a fatal media error", () => {
     const element = document.createElement("video");
     Object.defineProperty(element, "error", {

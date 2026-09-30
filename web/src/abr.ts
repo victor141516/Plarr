@@ -1,12 +1,39 @@
 export type ABRLevel = { bitrate: number };
 
+export function effectiveAdaptiveBandwidth(
+  hlsEstimate: number,
+  independentProbe: number,
+) {
+  const hls = Number.isFinite(hlsEstimate) && hlsEstimate > 0 ? hlsEstimate : 0;
+  const probe = Number.isFinite(independentProbe) && independentProbe > 0
+    ? independentProbe
+    : 0;
+  if (!hls) return probe;
+  if (!probe) return hls;
+  return Math.min(hls, probe);
+}
+
+// Some browser HEVC Main 10 decoders cannot append very small HDR renditions
+// even when the same stream plays at 480p. Keep automatic playback on a
+// decodable floor; SDR retains the full low-bandwidth ladder.
+export function minimumAutoLevel(
+  levels: { height: number }[],
+  color: "hdr" | "sdr",
+) {
+  if (color !== "hdr") return 0;
+  if (!levels.some((level) => level.height >= 480)) return 0;
+  // Server configuration is ordered high-to-low; hls.js exposes the same
+  // ladder low-to-high. Count lower rungs rather than using a config index.
+  return levels.filter((level) => level.height < 480).length;
+}
+
 export type AutoLevelTarget = {
   autoLevelCapping: number;
   nextAutoLevel: number;
 };
 
 export type PinnedAutoLevelTarget = AutoLevelTarget & {
-  nextLevel: number;
+  loadLevel: number;
 };
 
 // Start at the safest level, then jump directly to the highest rendition that
@@ -20,6 +47,9 @@ export function chooseAutoLevel(
   failed: Map<number, number>,
 ) {
   if (current < 0 || !levels.length || bandwidth <= 0) return current;
+  // Switching starts a new FFmpeg rendition and retires the old writer. Keep
+  // enough of the old rendition buffered to cover a cold transcode startup.
+  if (bufferSeconds < 6) return current;
   const usable = bandwidth * (bufferSeconds < 4 ? 0.72 : 0.82);
   let affordable = current;
   for (let index = current + 1; index < levels.length; index++) {
@@ -28,8 +58,6 @@ export function chooseAutoLevel(
     else break;
   }
   if (affordable <= current) return current;
-  if (bufferSeconds < 2 && levels[current + 1]!.bitrate * 1.5 > bandwidth)
-    return current;
   return affordable;
 }
 
@@ -65,11 +93,24 @@ export function pinAutoLevel(
   target: number,
 ) {
   requestAutoLevel(controller, target);
-  controller.nextLevel = target;
+  // loadLevel retains the already-buffered rendition. nextLevel schedules a
+  // forward-buffer flush, which can strand a cold transcode before it has
+  // produced its first segment.
+  controller.loadLevel = target;
+}
+
+// The 750 ms ABR tick must not repeatedly reassign an already-pending level.
+export function pinAutoLevelOnce(
+  controller: PinnedAutoLevelTarget,
+  target: number,
+  previousTarget: number,
+) {
+  if (target !== previousTarget) pinAutoLevel(controller, target);
+  return target;
 }
 
 export function releasePinnedAutoLevel(controller: PinnedAutoLevelTarget) {
-  controller.nextLevel = -1;
+  controller.loadLevel = -1;
 }
 
 export function shouldUseOriginal(
@@ -78,11 +119,13 @@ export function shouldUseOriginal(
   bufferSeconds: number,
   blockedUntil: number,
   now = Date.now(),
+  independentBandwidth = bandwidth,
 ) {
   return (
     sourceBitrate > 0 &&
     bufferSeconds >= 4 &&
     now >= blockedUntil &&
-    bandwidth >= sourceBitrate * 1.5
+    bandwidth >= sourceBitrate * 1.5 &&
+    independentBandwidth >= sourceBitrate * 1.5
   );
 }

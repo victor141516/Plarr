@@ -47,7 +47,7 @@ export function useMediaElementEvents(options: MediaElementEventsOptions) {
     });
     listen("playing", () => {
       options.onReady?.();
-      options.clearStartupWatchdog();
+      if (options.timeline.pendingAbsolute === undefined) options.clearStartupWatchdog();
       options.clearOriginalStall();
       if (options.timeline.pendingAbsolute === undefined) {
         options.loading.value = false;
@@ -61,10 +61,10 @@ export function useMediaElementEvents(options: MediaElementEventsOptions) {
     });
     listen("canplay", () => {
       options.onReady?.();
-      options.clearStartupWatchdog();
       options.completePendingPosition();
-      if (options.timeline.pendingAbsolute === undefined && element.readyState >= 3) {
-        options.loading.value = false;
+      if (options.timeline.pendingAbsolute === undefined) {
+        options.clearStartupWatchdog();
+        if (element.readyState >= 3) options.loading.value = false;
       }
     });
     listen("loadedmetadata", () => {
@@ -88,7 +88,7 @@ export function useMediaElementEvents(options: MediaElementEventsOptions) {
       if (options.timeline.pendingAbsolute === undefined) options.emit("seek");
     });
     listen("timeupdate", () => {
-      if (!options.timeline.scrubbing) {
+      if (!options.timeline.scrubbing && options.timeline.pendingAbsolute === undefined) {
         options.current.value = Math.min(
           options.duration.value || Infinity,
           options.absoluteTime(),

@@ -42,6 +42,32 @@ function player(mode: PlaybackMode, paused = false) {
 }
 
 describe("absolute playback transitions", () => {
+  it("keeps a requested HLS position pending until playable media covers it", () => {
+    const state = player("adaptive");
+    Object.defineProperties(state.element, {
+      buffered: { configurable: true, value: ranges([]) },
+      seekable: { configurable: true, value: ranges([[0, 12]]) },
+    });
+    state.timeline.timeline.offset = 4_994;
+    state.timeline.timeline.mediaOrigin = undefined;
+    state.timeline.timeline.pendingAbsolute = 5_000;
+
+    state.timeline.completePendingPosition();
+
+    expect(state.timeline.timeline.pendingAbsolute).toBe(5_000);
+    expect(state.timeline.timeline.mediaOrigin).toBeUndefined();
+
+    Object.defineProperty(state.element, "buffered", {
+      configurable: true,
+      value: ranges([[0.4, 8.4]]),
+    });
+    state.timeline.completePendingPosition();
+
+    expect(state.timeline.timeline.pendingAbsolute).toBeUndefined();
+    expect(state.timeline.timeline.mediaOrigin).toBe(0.4);
+    expect(state.element.currentTime).toBeCloseTo(6.4);
+  });
+
   it("maps a retained source-keyframe preroll back to the requested absolute position", () => {
     const state = player("adaptive");
     Object.defineProperties(state.element, {
@@ -64,6 +90,18 @@ describe("absolute playback transitions", () => {
     expect(state.element.currentTime).toBeCloseTo(5.512);
     expect(state.timeline.current.value).toBe(5_467);
     expect(state.timeline.timeline.pendingAbsolute).toBeUndefined();
+  });
+
+  it("does not restart playback after a seek initiated while paused", () => {
+    const state = player("adaptive", true);
+    const play = vi.spyOn(state.element, "play");
+    state.timeline.timeline.pendingAbsolute = 5;
+    state.timeline.timeline.resumeAfterLoad = false;
+
+    state.timeline.completePendingPosition();
+
+    expect(state.timeline.timeline.pendingAbsolute).toBeUndefined();
+    expect(play).not.toHaveBeenCalled();
   });
 
   it.each([

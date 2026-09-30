@@ -9,6 +9,7 @@ import { usePlarrPlayer } from "./usePlarrPlayer";
 import { watchPartyShareURL } from "./watchPartyShareURL";
 
 const shareCopied = shallowRef(false);
+const initialAutoplay = shallowRef(true);
 let copyResetTimer: number | undefined;
 async function copyWatchPartyLink() {
   const link = watchPartyShareURL(location.href);
@@ -126,7 +127,8 @@ const {
         <video
           ref="video"
           :style="videoContentStyle"
-          :autoplay="!watchPartyActive"
+          :autoplay="initialAutoplay && !watchPartyActive"
+          @play="initialAutoplay = false"
           playsinline
         />
       </div>
