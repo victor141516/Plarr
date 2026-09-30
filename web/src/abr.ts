@@ -33,7 +33,7 @@ export type AutoLevelTarget = {
 };
 
 export type PinnedAutoLevelTarget = AutoLevelTarget & {
-  nextLevel: number;
+  loadLevel: number;
 };
 
 // Start at the safest level, then jump directly to the highest rendition that
@@ -93,11 +93,24 @@ export function pinAutoLevel(
   target: number,
 ) {
   requestAutoLevel(controller, target);
-  controller.nextLevel = target;
+  // loadLevel retains the already-buffered rendition. nextLevel schedules a
+  // forward-buffer flush, which can strand a cold transcode before it has
+  // produced its first segment.
+  controller.loadLevel = target;
+}
+
+// The 750 ms ABR tick must not repeatedly reassign an already-pending level.
+export function pinAutoLevelOnce(
+  controller: PinnedAutoLevelTarget,
+  target: number,
+  previousTarget: number,
+) {
+  if (target !== previousTarget) pinAutoLevel(controller, target);
+  return target;
 }
 
 export function releasePinnedAutoLevel(controller: PinnedAutoLevelTarget) {
-  controller.nextLevel = -1;
+  controller.loadLevel = -1;
 }
 
 export function shouldUseOriginal(

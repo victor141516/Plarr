@@ -51,3 +51,15 @@ func TestPlaybackGenerationRejectsStaleChildrenAndMasters(t *testing.T) {
 		t.Fatal("newer master generation was rejected")
 	}
 }
+
+func TestSourceGenerationIsCancelledOnlyOnItsFirstMasterRequest(t *testing.T) {
+	if !sourceSwitchNeeded(4, 0) {
+		t.Fatal("a new source generation must stop the old jobs")
+	}
+	if sourceSwitchNeeded(4, 4) {
+		t.Fatal("reloading the same HLS master must not stop its video and audio jobs")
+	}
+	if !sourceSwitchNeeded(5, 4) {
+		t.Fatal("a newer source generation must stop the previous jobs")
+	}
+}

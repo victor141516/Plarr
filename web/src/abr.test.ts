@@ -5,6 +5,7 @@ import {
   effectiveAdaptiveBandwidth,
   minimumAutoLevel,
   pinAutoLevel,
+  pinAutoLevelOnce,
   releasePinnedAutoLevel,
   requestAutoLevel,
   shouldUseOriginal,
@@ -83,15 +84,33 @@ describe("automatic original quality", () => {
     const controller = {
       autoLevelCapping: 0,
       nextAutoLevel: 0,
-      nextLevel: -1,
+      loadLevel: -1,
     };
     pinAutoLevel(controller, 7);
     expect(controller).toEqual({
       autoLevelCapping: 7,
       nextAutoLevel: 7,
-      nextLevel: 7,
+      loadLevel: 7,
     });
     releasePinnedAutoLevel(controller);
-    expect(controller.nextLevel).toBe(-1);
+    expect(controller.loadLevel).toBe(-1);
+  });
+
+  it("does not schedule another hls.js switch for the same target on each ABR tick", () => {
+    let level = -1;
+    let switches = 0;
+    const controller = {
+      autoLevelCapping: 0,
+      nextAutoLevel: 0,
+    get loadLevel() { return level; },
+    set loadLevel(value: number) { level = value; switches++; },
+    };
+    let pinned = -1;
+    pinned = pinAutoLevelOnce(controller, 3, pinned);
+    pinned = pinAutoLevelOnce(controller, 3, pinned);
+    expect(pinned).toBe(3);
+    expect(switches).toBe(1);
+    pinned = pinAutoLevelOnce(controller, 5, pinned);
+    expect(switches).toBe(2);
   });
 });

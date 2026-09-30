@@ -42,8 +42,9 @@ type Server struct {
 	Grants    *playbackgrant.Manager
 	Parties   *watchparty.Manager
 
-	playbackGenerationMu sync.Mutex
-	playbackGenerations  map[string]uint64
+	playbackGenerationMu      sync.Mutex
+	playbackGenerations       map[string]uint64
+	playbackSourceGenerations map[string]uint64
 }
 
 func (s *Server) Handler() http.Handler {
@@ -279,6 +280,7 @@ func (s *Server) playbackClose(w http.ResponseWriter, r *http.Request) {
 	s.Transcode.CancelSession(session)
 	s.playbackGenerationMu.Lock()
 	delete(s.playbackGenerations, session)
+	delete(s.playbackSourceGenerations, session)
 	s.playbackGenerationMu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -577,10 +579,14 @@ func (s *Server) acceptPlaybackGeneration(w http.ResponseWriter, r *http.Request
 	return true
 }
 
+func sourceSwitchNeeded(generation, lastCancelledGeneration uint64) bool {
+	return generation != lastCancelledGeneration
+}
+
 // cancelPlaybackSource linearizes the destructive source-family switch with
-// generation activation. Without this second check, an older master request
-// that finishes probing late could cancel the FFmpeg jobs started by a newer
-// master from the same player.
+// generation activation. A master playlist may be fetched again by hls.js
+// within the same generation; that refresh must not kill the encoders serving
+// its existing video and audio playlists.
 func (s *Server) cancelPlaybackSource(w http.ResponseWriter, r *http.Request, session string) bool {
 	generation, valid := validPlaybackGeneration(r.URL.Query().Get("generation"))
 	if !valid {
@@ -598,7 +604,13 @@ func (s *Server) cancelPlaybackSource(w http.ResponseWriter, r *http.Request, se
 		problem(w, http.StatusConflict, "stale_playback_generation", "This playback generation has been replaced.")
 		return false
 	}
-	s.Transcode.CancelSession(session)
+	if s.playbackSourceGenerations == nil {
+		s.playbackSourceGenerations = map[string]uint64{}
+	}
+	if sourceSwitchNeeded(generation, s.playbackSourceGenerations[session]) {
+		s.Transcode.CancelSession(session)
+		s.playbackSourceGenerations[session] = generation
+	}
 	return true
 }
 

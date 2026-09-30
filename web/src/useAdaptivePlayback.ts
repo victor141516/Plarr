@@ -3,7 +3,7 @@ import { onBeforeUnmount, type Ref, type ShallowRef } from "vue";
 import {
   chooseAutoLevel,
   minimumAutoLevel,
-  pinAutoLevel,
+  pinAutoLevelOnce,
   shouldUseOriginal,
 } from "./abr";
 import { AVSyncGuard, type AVSyncDivergence } from "./avSyncGuard";
@@ -74,6 +74,7 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
   let hls: Hls | null = null;
   let retryTimer: number | undefined;
   let currentLevel = -1;
+  let pinnedLevel = -1;
   let automatic = true;
   let networkRetries = 0;
   let mediaRetries = 0;
@@ -85,6 +86,10 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
   let startupBufferRestricted = true;
   let lowBufferSince = 0;
   const failedUpgrades = new Map<number, number>();
+
+  function pinLevel(instance: Hls, target: number) {
+    pinnedLevel = pinAutoLevelOnce(instance, target, pinnedLevel);
+  }
 
   function clearRetryTimer() {
     if (retryTimer) window.clearTimeout(retryTimer);
@@ -173,6 +178,7 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
     networkRetries = 0;
     mediaRetries = 0;
     currentLevel = -1;
+    pinnedLevel = -1;
     scaledLevelIndices = [];
     automaticOriginalPending = false;
     startupBufferRestricted = true;
@@ -222,7 +228,7 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
           instance.currentLevel = hlsLevel;
           pendingManualLevel = undefined;
         } else if (automatic) {
-          pinAutoLevel(instance, scaledLevelIndices[initialLevel] ?? 0);
+          pinLevel(instance, scaledLevelIndices[initialLevel] ?? 0);
         }
       }
       options.completePendingPosition();
@@ -236,7 +242,7 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
       if (hls !== instance) return;
       options.completePendingPosition();
       const element = options.video.value;
-      if (element && options.bufferAhead(element) > 0.25) {
+      if (element && options.timeline.pendingAbsolute === undefined && options.bufferAhead(element) > 0.25) {
         options.clearStartupWatchdog();
       }
       if (
@@ -317,7 +323,7 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
           if (hls === instance) {
             options.recoverExpiredWindow(
               original,
-              options.current.value,
+              options.timeline.pendingAbsolute ?? options.current.value,
               options.shouldResumePlayback(),
             );
           }
@@ -369,6 +375,10 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
   function fastABR() {
     options.updatePlaybackSignals();
     if (!hls || !automatic || currentLevel < 0 || !options.video.value) return;
+    if (options.timeline.pendingAbsolute !== undefined) {
+      lowBufferSince = 0;
+      return;
+    }
     const element = options.video.value;
     const buffer = options.bufferAhead(element);
     const bandwidth = options.bandwidthEstimate.value;
@@ -382,7 +392,50 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
     }
     const sustainedBufferStarvation =
       lowBufferSince > 0 && now - lowBufferSince >= 3_000;
-    if (options.timeline.pendingAbsolute !== undefined || buffer <= 0) return;
+    const currentScaledLevel = scaledLevelIndices.indexOf(currentLevel);
+    if (currentScaledLevel < 0) return;
+    const minimumLevel = minimumAutoLevel(
+      options.availableLevels.value,
+      options.getDeliveryColor(),
+    );
+    if (pinnedLevel >= 0 && pinnedLevel !== currentLevel) {
+      // A new level has been requested but has not reached the media element.
+      // Reconsidering it on every tick can cancel both FFmpeg jobs before the
+      // new rendition gets its first playable fragment.
+      if (sustainedBufferStarvation) {
+        failedUpgrades.set(
+          pinnedLevel,
+          (failedUpgrades.get(pinnedLevel) || 0) + 1,
+        );
+        autoUpgradeBlockedUntil = now + 30_000;
+        lowBufferSince = 0;
+        options.diagnosticsDecision.value =
+          "Automatic quality switch stalled; playback is reopening at the last playable resolution.";
+        loadAdaptiveAt(
+          options.current.value,
+          options.shouldResumePlayback(),
+          Math.max(minimumLevel, currentScaledLevel),
+        );
+      }
+      return;
+    }
+    if (sustainedBufferStarvation && currentScaledLevel > minimumLevel) {
+      failedUpgrades.set(
+        currentLevel,
+        (failedUpgrades.get(currentLevel) || 0) + 1,
+      );
+      autoUpgradeBlockedUntil = now + 30_000;
+      lowBufferSince = 0;
+      options.diagnosticsDecision.value =
+        "Automatic quality stalled; playback is reopening one resolution lower.";
+      loadAdaptiveAt(
+        options.current.value,
+        options.shouldResumePlayback(),
+        Math.max(minimumLevel, currentScaledLevel - 1),
+      );
+      return;
+    }
+    if (buffer <= 0) return;
     if (startupBufferRestricted && bandwidth > 0 && buffer >= 4) {
       hls.config.maxBufferLength = steadyBufferSeconds;
       hls.config.maxMaxBufferLength = steadyBufferSeconds;
@@ -394,7 +447,7 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
       scaledFailures.set(displayIndex, failedUpgrades.get(levelIndex) || 0);
     });
     if (Date.now() < autoUpgradeBlockedUntil) {
-      if (currentLevel >= 0) pinAutoLevel(hls, currentLevel);
+      if (currentLevel >= 0) pinLevel(hls, currentLevel);
       return;
     }
     if (
@@ -417,30 +470,8 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
       );
       return;
     }
-    const currentScaledLevel = scaledLevelIndices.indexOf(currentLevel);
-    if (currentScaledLevel < 0) return;
-    const minimumLevel = minimumAutoLevel(
-      options.availableLevels.value,
-      options.getDeliveryColor(),
-    );
-    if (sustainedBufferStarvation && currentScaledLevel > minimumLevel) {
-      const target =
-        scaledLevelIndices[Math.max(minimumLevel, currentScaledLevel - 1)] ??
-        scaledLevelIndices[0] ??
-        0;
-      failedUpgrades.set(
-        currentLevel,
-        (failedUpgrades.get(currentLevel) || 0) + 1,
-      );
-      autoUpgradeBlockedUntil = now + 30_000;
-      pinAutoLevel(hls, target);
-      options.diagnosticsDecision.value =
-        "Automatic one-step downgrade after the playable buffer stayed below one second for three seconds.";
-      lowBufferSince = 0;
-      return;
-    }
     if (independentBandwidth <= 0) {
-      pinAutoLevel(hls, currentLevel);
+      pinLevel(hls, currentLevel);
       options.diagnosticsDecision.value =
         "Automatic quality is waiting for an independent network measurement.";
       return;
@@ -456,9 +487,9 @@ export function useAdaptivePlayback(options: AdaptivePlaybackOptions) {
       const hlsTarget = scaledLevelIndices[target]!;
       const selected = hls.levels[hlsTarget];
       options.diagnosticsDecision.value = `Automatic direct upgrade to ${selected?.height || "the optimal"}p: the ${buffer < 4 ? "72" : "82"}% safety budget from the measured bandwidth supports its target bitrate with ${buffer.toFixed(1)} s buffered.`;
-      pinAutoLevel(hls, hlsTarget);
+      pinLevel(hls, hlsTarget);
     } else {
-      pinAutoLevel(hls, currentLevel);
+      pinLevel(hls, currentLevel);
     }
   }
 

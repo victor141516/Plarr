@@ -76,9 +76,8 @@ export function usePlayerTimeline(options: PlayerTimelineOptions) {
       (mode === "adaptive" || mode === "native-hls" || mode === "original-hls") &&
       timeline.mediaOrigin === undefined
     ) {
-      if (element.buffered.length) timeline.mediaOrigin = element.buffered.start(0);
-      else if (element.seekable.length) timeline.mediaOrigin = element.seekable.start(0);
-      else return;
+      if (!element.buffered.length) return;
+      timeline.mediaOrigin = element.buffered.start(0);
     }
     const local = mediaTimeForAbsolute(
       timeline.pendingAbsolute,
@@ -87,10 +86,7 @@ export function usePlayerTimeline(options: PlayerTimelineOptions) {
     );
     if (mode === "original-direct") {
       if (element.readyState < 1) return;
-    } else if (
-      !rangeContains(element.seekable, local) &&
-      !rangeContains(element.buffered, local)
-    ) {
+    } else if (!rangeContains(element.buffered, local)) {
       return;
     }
     element.currentTime = local;

@@ -261,6 +261,7 @@ export function usePlarrPlayer() {
       hasPlayableBuffer: () => {
         const element = video.value;
         return (
+          timeline.pendingAbsolute === undefined &&
           !!element && (element.readyState >= 3 || bufferAhead(element) > 0.25)
         );
       },
