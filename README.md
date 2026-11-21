@@ -2,7 +2,7 @@
 
 ### Your videos, ready for the screen you're on.
 
-Plarr is a self-hosted video player for your own media. Open a film or episode in your browser, let quality adapt to your connection, or send it to a Chromecast—no app to install on the TV. Use Plarr on its own or as the player inside [Nestrr](https://github.com/victor141516/Nestrr).
+Plarr is a self-hosted video player for your own media. Open a film or episode in your browser, let quality adapt to your connection, or send it to a Chromecast—no app to install on the TV.
 
 ![Plarr playing a demo clip in the browser](docs/images/player-overview.png)
 
@@ -13,7 +13,7 @@ Plarr is a self-hosted video player for your own media. Open a film or episode i
 - **Watch HDR your way.** Keep HDR, let Plarr choose, or switch to SDR with tone mapping when the source and your display call for it.
 - **Make playback yours.** Choose audio and subtitles, preview the timeline, adjust speed, crop away baked-in black bars, and tune brightness, contrast, saturation, and gamma.
 - **Take it to the TV.** Cast to a Chromecast with Google's built-in receiver—nothing to install on the television.
-- **Bring your own library.** Plarr runs independently and can also sit behind Nestrr's catalog and accounts. Optional playback grants protect individual files when access control is needed.
+- **Bring your own library.** Plarr runs independently. Optional playback grants protect individual files when access control is needed, and it can also serve as the player for [Nestrr](https://github.com/victor141516/Nestrr)'s catalog and accounts.
 
 ![Plarr's Auto, Original, and resolution choices](docs/images/quality-menu.png)
 
